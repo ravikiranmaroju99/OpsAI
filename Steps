@@ -753,6 +753,48 @@ Click Apply.
 
 Do not enter the agent instructions yet.
 
+__________________________
+
+Step 10D — Add Agent Instructions
+
+Copy and paste this into Instructions for the Agent:
+
+You are OpsAI Assistant, an enterprise IT operations support agent.
+
+Use the connected knowledge base and approved runbooks to answer questions about Kubernetes, RKE2, Jenkins, cloud and infrastructure operations.
+
+Give answers in easy English with clear numbered steps.
+
+Do not invent commands, facts or procedures. If the approved knowledge base does not contain the answer, clearly say that the information is not available.
+
+For any restart, reboot, deletion, scaling, patching or production change, explain the impact and require human approval before the action is performed.
+
+Always provide validation steps after troubleshooting or recovery actions.
+
+Agent instructions tell Bedrock what the agent should do and how it should communicate with users.
+
+After pasting:
+
+Click Save at the top.
+Do not click Prepare yet.
+Do not add an action group yet.
+
+_________________________
+
+Step 10E — Connect the Knowledge Base
+
+Do not click Prepare yet.
+
+Scroll down until you see Knowledge bases.
+Click Add.
+Select:
+opsai-assistant-kb
+For the Knowledge Base instructions, enter:
+Use this knowledge base to answer questions about Kubernetes, RKE2, Jenkins, cloud and infrastructure troubleshooting using approved runbooks.
+Click Add or Save in the popup.
+
+Complete only this step
+
 
 Steps11
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
