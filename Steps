@@ -3181,8 +3181,1238 @@ After SUCCEED, open the URL and press Ctrl + F5 to load the updated design.
 
 Steps17
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step 17 — Fix Chat Response Formatting
 
+This will display:
+
+**text** as bold
+Commands such as kubectl get nodes in code format
+Numbered and bullet lists properly
+Multiline code blocks clearly
+
+It will also safely escape HTML to protect the chatbot page.
+
+Step 17A — Update the JavaScript Formatter
+
+Run this in CloudShell:
+
+cd ~/opsai-assistant-aws
+
+python3 - <<'PY'
+from pathlib import Path
+
+app_file = Path("app/web/app.js")
+content = app_file.read_text(encoding="utf-8")
+
+marker = '''function createId(prefix = "id") {
+    return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+'''
+
+formatter = r'''
+function escapeHtml(value) {
+    const element = document.createElement("div");
+    element.textContent = String(value ?? "");
+    return element.innerHTML;
+}
+
+function formatInlineMarkdown(value) {
+    let safeText = escapeHtml(value);
+
+    safeText = safeText.replace(
+        /`([^`\n]+)`/g,
+        "<code>$1</code>"
+    );
+
+    safeText = safeText.replace(
+        /\*\*([^*]+)\*\*/g,
+        "<strong>$1</strong>"
+    );
+
+    safeText = safeText.replace(
+        /\*([^*\n]+)\*/g,
+        "<em>$1</em>"
+    );
+
+    return safeText;
+}
+
+function renderMarkdown(markdown) {
+    const lines = String(markdown ?? "").replace(/\r/g, "").split("\n");
+    const output = [];
+
+    let listType = null;
+    let insideCodeBlock = false;
+    let codeLines = [];
+
+    function closeList() {
+        if (listType) {
+            output.push(`</${listType}>`);
+            listType = null;
+        }
+    }
+
+    function openList(type) {
+        if (listType === type) {
+            return;
+        }
+
+        closeList();
+        output.push(`<${type}>`);
+        listType = type;
+    }
+
+    for (const line of lines) {
+        if (line.trim().startsWith("```")) {
+            closeList();
+
+            if (insideCodeBlock) {
+                output.push(
+                    `<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`
+                );
+                codeLines = [];
+                insideCodeBlock = false;
+            } else {
+                insideCodeBlock = true;
+            }
+
+            continue;
+        }
+
+        if (insideCodeBlock) {
+            codeLines.push(line);
+            continue;
+        }
+
+        const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+
+        if (headingMatch) {
+            closeList();
+
+            const level = headingMatch[1].length + 2;
+
+            output.push(
+                `<h${level}>${formatInlineMarkdown(headingMatch[2])}</h${level}>`
+            );
+
+            continue;
+        }
+
+        const orderedMatch = line.match(/^\s*\d+\.\s+(.+)$/);
+
+        if (orderedMatch) {
+            openList("ol");
+            output.push(
+                `<li>${formatInlineMarkdown(orderedMatch[1])}</li>`
+            );
+            continue;
+        }
+
+        const bulletMatch = line.match(/^\s*[-•]\s+(.+)$/);
+
+        if (bulletMatch) {
+            openList("ul");
+            output.push(
+                `<li>${formatInlineMarkdown(bulletMatch[1])}</li>`
+            );
+            continue;
+        }
+
+        if (!line.trim()) {
+            closeList();
+            continue;
+        }
+
+        closeList();
+        output.push(`<p>${formatInlineMarkdown(line)}</p>`);
+    }
+
+    closeList();
+
+    if (insideCodeBlock && codeLines.length) {
+        output.push(
+            `<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`
+        );
+    }
+
+    return output.join("");
+}
+'''
+
+if "function renderMarkdown(markdown)" not in content:
+    if marker not in content:
+        raise SystemExit("Could not find the JavaScript insertion point.")
+
+    content = content.replace(marker, marker + formatter)
+    print("Markdown formatter added.")
+else:
+    print("Markdown formatter already exists.")
+
+old_block = '''    const content = document.createElement("div");
+    content.textContent = message.content;
+    bubble.appendChild(content);
+'''
+
+new_block = '''    const content = document.createElement("div");
+
+    if (message.role === "assistant") {
+        content.className = "markdown-content";
+        content.innerHTML = renderMarkdown(message.content);
+    } else {
+        content.textContent = message.content;
+    }
+
+    bubble.appendChild(content);
+'''
+
+if new_block in content:
+    print("Assistant response rendering is already updated.")
+elif old_block in content:
+    content = content.replace(old_block, new_block)
+    print("Assistant response rendering updated.")
+else:
+    raise SystemExit("Could not find the message rendering section.")
+
+app_file.write_text(content, encoding="utf-8")
+PY
+
+grep -n "renderMarkdown" app/web/app.js
+Step 17B — Add Formatting Styles
+
+Run:
+
+cat >> ~/opsai-assistant-aws/app/web/styles.css <<'EOF'
+
+/* OpsAI response formatting */
+
+.markdown-content p {
+    margin: 0 0 11px;
+}
+
+.markdown-content p:last-child {
+    margin-bottom: 0;
+}
+
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5 {
+    margin: 17px 0 8px;
+    color: #132a4f;
+    line-height: 1.35;
+}
+
+.markdown-content ol,
+.markdown-content ul {
+    margin: 8px 0 14px;
+    padding-left: 25px;
+}
+
+.markdown-content li {
+    margin: 6px 0;
+    padding-left: 3px;
+}
+
+.markdown-content strong {
+    color: #132a4f;
+    font-weight: 750;
+}
+
+.markdown-content code {
+    padding: 2px 6px;
+    border: 1px solid #dbeafe;
+    border-radius: 5px;
+    background: #eff6ff;
+    color: #1e3a8a;
+    font-family:
+        "Cascadia Code",
+        "Consolas",
+        monospace;
+    font-size: 0.92em;
+}
+
+.markdown-content pre {
+    margin: 12px 0;
+    padding: 14px;
+    overflow-x: auto;
+    border-radius: 10px;
+    background: #0f172a;
+}
+
+.markdown-content pre code {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #e2e8f0;
+    white-space: pre;
+}
+EOF
+Step 17C — Redeploy the Updated UI
+
+Run:
+
+cd ~/opsai-assistant-aws
+
+set -a
+source .env
+set +a
+
+rm -f app/opsai-assistant-ui.zip
+
+cd app/web
+zip -qr ../opsai-assistant-ui.zip .
+cd ../..
+
+DEPLOYMENT_OUTPUT=$(aws amplify create-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --region "$AWS_REGION" \
+  --output json)
+
+JOB_ID=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["jobId"])')
+
+UPLOAD_URL=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["zipUploadUrl"])')
+
+curl -sS \
+  --upload-file app/opsai-assistant-ui.zip \
+  "$UPLOAD_URL"
+
+aws amplify start-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --job-id "$JOB_ID" \
+  --region "$AWS_REGION" \
+  >/dev/null
+
+while true
+do
+    STATUS=$(aws amplify get-job \
+      --app-id "$AMPLIFY_APP_ID" \
+      --branch-name "$AMPLIFY_BRANCH_NAME" \
+      --job-id "$JOB_ID" \
+      --region "$AWS_REGION" \
+      --query 'job.summary.status' \
+      --output text)
+
+    echo "Deployment status: $STATUS"
+
+    case "$STATUS" in
+        SUCCEED)
+            break
+            ;;
+        FAILED|CANCELLED)
+            echo "Deployment failed."
+            exit 1
+            ;;
+        *)
+            sleep 10
+            ;;
+    esac
+done
+
+echo "Updated chatbot URL: $AMPLIFY_URL"
+
+After it shows SUCCEED, press Ctrl + F5 in the browser and ask:
+
+What are the benefits of OpsAI? Give the answer with bold headings and numbered points.
+
+The ** symbols should disappear, and the headings should display in bold.
 
 
 Steps18
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step 18A — Add OpsAI Overview and Benefits
+
+Run this in CloudShell:
+
+cd ~/opsai-assistant-aws
+
+set -a
+source .env
+set +a
+
+cat > data/opsai-assistant-overview.md <<'EOF'
+# OpsAI Assistant Overview
+
+## What is OpsAI Assistant?
+
+OpsAI Assistant is an enterprise IT operations support chatbot created to help cloud operations, Kubernetes, DevOps, SRE, infrastructure, service desk and application support teams.
+
+It uses approved operational documents and runbooks stored in an Amazon Bedrock Knowledge Base.
+
+## Current MVP Capabilities
+
+The current AWS MVP can:
+
+1. Answer questions using approved runbooks.
+2. Support Kubernetes, RKE2 and Jenkins troubleshooting.
+3. Provide easy numbered troubleshooting steps.
+4. provide useful validation commands.
+5. Maintain conversation context within the same chat session.
+6. Show previous conversations in browser chat history.
+7. Warn users that production changes require human approval.
+8. Be accessed through a browser-based chatbot interface.
+
+## Benefits of OpsAI Assistant
+
+### 1. Faster Troubleshooting
+
+OpsAI Assistant quickly searches approved operational runbooks and provides relevant troubleshooting steps. This can reduce the time spent manually searching documents.
+
+### 2. Consistent Support
+
+The assistant provides standardized guidance from approved sources. This helps different support engineers follow the same troubleshooting process.
+
+### 3. 24x7 Self-Service Access
+
+Users can access operational guidance at any time through the chatbot interface, subject to AWS service availability.
+
+### 4. Knowledge Sharing
+
+Important operational knowledge can be made available to support teams, new employees and project members through a common chatbot.
+
+### 5. Faster Employee Onboarding
+
+New team members can use OpsAI Assistant to understand approved procedures, troubleshooting commands and validation steps.
+
+### 6. Reduced Dependency on Individual Experts
+
+Operational knowledge is stored in an approved central Knowledge Base instead of depending only on the availability of specific engineers.
+
+### 7. Human Approval for Critical Changes
+
+OpsAI Assistant must request human approval before recommending or performing restarts, reboots, deletions, scaling, patching or production changes.
+
+### 8. Validation After Troubleshooting
+
+The assistant provides validation steps so that users can confirm whether the issue is resolved and services are operating correctly.
+
+### 9. Reusable Across Projects
+
+The solution can be reused for cloud operations, Kubernetes, DevOps, infrastructure and application-support requirements across different delivery teams and clients.
+
+### 10. Future Integration Possibilities
+
+Future versions can integrate with approved APIs for Jira, Jenkins, Kubernetes, monitoring tools, email and automation platforms.
+
+These integrations are not enabled for automatic production actions in the current MVP.
+
+## Security and Governance
+
+The current MVP:
+
+- Uses approved Knowledge Base documents.
+- Does not automatically execute production changes.
+- Requires human approval for critical actions.
+- Uses IAM permissions to control AWS access.
+- Stores application logs in Amazon CloudWatch.
+- Provides validation steps after troubleshooting.
+
+## Current MVP Architecture
+
+The request flow is:
+
+User browser interface  
+→ Amazon Amplify Hosting  
+→ Amazon API Gateway  
+→ AWS Lambda  
+→ Amazon Bedrock Agent  
+→ Amazon Bedrock Knowledge Base  
+→ Approved runbooks stored in Amazon S3
+
+## Creator and Contact
+
+OpsAI Assistant was created by Ravi Kiran Maroju.
+
+For suggestions or concerns, contact:
+
+ravi.maroju@cgi.com
+EOF
+
+aws s3 cp \
+  data/opsai-assistant-overview.md \
+  "s3://$OPSAI_BUCKET/knowledge/opsai-assistant-overview.md"
+
+echo
+echo "Uploaded documents:"
+aws s3 ls "s3://$OPSAI_BUCKET/knowledge/"
+
+You should see:
+
+opsai-assistant-overview.md
+Step 18B — Sync the Updated Knowledge Base
+
+Amazon Bedrock checks new, changed and deleted S3 documents when the data source is synchronized. The start-ingestion-job operation starts this sync and indexing process.
+
+Run:
+
+cd ~/opsai-assistant-aws
+
+set -a
+source .env
+set +a
+
+KB_ID=$(aws bedrock-agent list-knowledge-bases \
+  --region "$AWS_REGION" \
+  --query \
+  "knowledgeBaseSummaries[?name=='opsai-assistant-kb'].knowledgeBaseId | [0]" \
+  --output text)
+
+if [[ -z "$KB_ID" || "$KB_ID" == "None" ]]; then
+  echo "ERROR: Could not find opsai-assistant-kb."
+  exit 1
+fi
+
+DATA_SOURCE_ID=$(aws bedrock-agent list-data-sources \
+  --knowledge-base-id "$KB_ID" \
+  --region "$AWS_REGION" \
+  --query \
+  "dataSourceSummaries[?name=='opsai-runbooks-s3'].dataSourceId | [0]" \
+  --output text)
+
+if [[ -z "$DATA_SOURCE_ID" || "$DATA_SOURCE_ID" == "None" ]]; then
+  echo "ERROR: Could not find opsai-runbooks-s3."
+  exit 1
+fi
+
+echo "Knowledge Base ID: $KB_ID"
+echo "Data Source ID: $DATA_SOURCE_ID"
+
+INGESTION_JOB_ID=$(aws bedrock-agent start-ingestion-job \
+  --knowledge-base-id "$KB_ID" \
+  --data-source-id "$DATA_SOURCE_ID" \
+  --description "Add OpsAI overview and benefits document" \
+  --region "$AWS_REGION" \
+  --query 'ingestionJob.ingestionJobId' \
+  --output text)
+
+echo "Ingestion Job ID: $INGESTION_JOB_ID"
+echo "Waiting for Knowledge Base sync..."
+
+while true
+do
+  STATUS=$(aws bedrock-agent get-ingestion-job \
+    --knowledge-base-id "$KB_ID" \
+    --data-source-id "$DATA_SOURCE_ID" \
+    --ingestion-job-id "$INGESTION_JOB_ID" \
+    --region "$AWS_REGION" \
+    --query 'ingestionJob.status' \
+    --output text)
+
+  echo "Sync status: $STATUS"
+
+  case "$STATUS" in
+    COMPLETE)
+      break
+      ;;
+    FAILED|STOPPED)
+      echo "Knowledge Base sync was not successful."
+
+      aws bedrock-agent get-ingestion-job \
+        --knowledge-base-id "$KB_ID" \
+        --data-source-id "$DATA_SOURCE_ID" \
+        --ingestion-job-id "$INGESTION_JOB_ID" \
+        --region "$AWS_REGION" \
+        --query 'ingestionJob.failureReasons' \
+        --output json
+
+      exit 1
+      ;;
+    *)
+      sleep 10
+      ;;
+  esac
+done
+
+aws bedrock-agent get-ingestion-job \
+  --knowledge-base-id "$KB_ID" \
+  --data-source-id "$DATA_SOURCE_ID" \
+  --ingestion-job-id "$INGESTION_JOB_ID" \
+  --region "$AWS_REGION" \
+  --query \
+  'ingestionJob.{Status:status,Statistics:statistics,FailureReasons:failureReasons}' \
+  --output json
+
+The expected final status is:
+
+COMPLETE
+
+AWS provides the Knowledge Base ID, data-source ID and ingestion-job ID to start and check an ingestion job.
+
+Step 18C — Test from the UI
+
+After the sync shows COMPLETE:
+
+Open the OpsAI chatbot.
+Press Ctrl + F5.
+Click New Chat.
+Ask:
+What are the benefits of OpsAI? Give the answer with bold headings and numbered points.
+
+Also test:
+
+Who created OpsAI Assistant and whom should I contact for suggestions?
+
+The assistant should now provide the benefits with properly formatted bold headings and identify Ravi Kiran Maroju with the contact address ravi.maroju@cgi.com.
+
+_____________________
+
+Step 18D — Fix HTML Tags in the UI
+
+Run this in CloudShell:
+
+cd ~/opsai-assistant-aws
+
+python3 - <<'PY'
+from pathlib import Path
+
+app_file = Path("app/web/app.js")
+content = app_file.read_text(encoding="utf-8")
+
+old_code = '''function renderMarkdown(markdown) {
+    const lines = String(markdown ?? "").replace(/\\r/g, "").split("\\n");
+'''
+
+new_code = r'''function normalizeModelOutput(value) {
+    let text = String(value ?? "");
+
+    // Convert HTML code blocks to Markdown code blocks.
+    text = text.replace(
+        /<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+        (_, code) => `\`\`\`\n${code.trim()}\n\`\`\``
+    );
+
+    // Convert HTML headings to Markdown headings.
+    text = text.replace(
+        /<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi,
+        (_, level, heading) =>
+            `${"#".repeat(Math.min(Number(level), 3))} ${heading.trim()}\n`
+    );
+
+    // Convert ordered HTML lists to numbered Markdown lists.
+    text = text.replace(
+        /<ol[^>]*>([\s\S]*?)<\/ol>/gi,
+        (_, body) => {
+            let number = 0;
+
+            return body.replace(
+                /<li[^>]*>([\s\S]*?)<\/li>/gi,
+                (_, item) => `${++number}. ${item.trim()}\n`
+            );
+        }
+    );
+
+    // Convert unordered HTML lists to Markdown bullet lists.
+    text = text.replace(
+        /<ul[^>]*>([\s\S]*?)<\/ul>/gi,
+        (_, body) =>
+            body.replace(
+                /<li[^>]*>([\s\S]*?)<\/li>/gi,
+                (_, item) => `- ${item.trim()}\n`
+            )
+    );
+
+    // Convert basic formatting tags.
+    text = text.replace(
+        /<strong[^>]*>([\s\S]*?)<\/strong>/gi,
+        "**$1**"
+    );
+
+    text = text.replace(
+        /<b[^>]*>([\s\S]*?)<\/b>/gi,
+        "**$1**"
+    );
+
+    text = text.replace(
+        /<em[^>]*>([\s\S]*?)<\/em>/gi,
+        "*$1*"
+    );
+
+    text = text.replace(
+        /<i[^>]*>([\s\S]*?)<\/i>/gi,
+        "*$1*"
+    );
+
+    text = text.replace(
+        /<code[^>]*>([\s\S]*?)<\/code>/gi,
+        "`$1`"
+    );
+
+    text = text.replace(/<br\s*\/?>/gi, "\n");
+
+    text = text.replace(
+        /<p[^>]*>([\s\S]*?)<\/p>/gi,
+        "$1\n"
+    );
+
+    // Remove remaining common layout tags.
+    text = text.replace(
+        /<\/?(?:div|span|section|article|header|footer|html|body)[^>]*>/gi,
+        ""
+    );
+
+    return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function renderMarkdown(markdown) {
+    const normalized = normalizeModelOutput(markdown);
+    const lines = normalized.replace(/\r/g, "").split("\n");
+'''
+
+if new_code in content:
+    print("HTML normalization is already configured.")
+elif old_code in content:
+    content = content.replace(old_code, new_code)
+    app_file.write_text(content, encoding="utf-8")
+    print("HTML normalization added successfully.")
+else:
+    raise SystemExit(
+        "Could not find renderMarkdown. Do not continue with deployment."
+    )
+PY
+
+grep -n "normalizeModelOutput" app/web/app.js
+Redeploy the UI
+cd ~/opsai-assistant-aws
+
+set -a
+source .env
+set +a
+
+rm -f app/opsai-assistant-ui.zip
+
+cd app/web
+zip -qr ../opsai-assistant-ui.zip .
+cd ../..
+
+DEPLOYMENT_OUTPUT=$(aws amplify create-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --region "$AWS_REGION" \
+  --output json)
+
+JOB_ID=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["jobId"])')
+
+UPLOAD_URL=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["zipUploadUrl"])')
+
+curl -sS \
+  --upload-file app/opsai-assistant-ui.zip \
+  "$UPLOAD_URL"
+
+aws amplify start-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --job-id "$JOB_ID" \
+  --region "$AWS_REGION" \
+  >/dev/null
+
+while true
+do
+    STATUS=$(aws amplify get-job \
+      --app-id "$AMPLIFY_APP_ID" \
+      --branch-name "$AMPLIFY_BRANCH_NAME" \
+      --job-id "$JOB_ID" \
+      --region "$AWS_REGION" \
+      --query 'job.summary.status' \
+      --output text)
+
+    echo "Deployment status: $STATUS"
+
+    case "$STATUS" in
+        SUCCEED)
+            break
+            ;;
+        FAILED|CANCELLED)
+            echo "Deployment failed."
+            exit 1
+            ;;
+        *)
+            sleep 10
+            ;;
+    esac
+done
+
+echo "UI deployment completed: $AMPLIFY_URL"
+Step 18E — Strengthen the Agent Instructions
+
+The current alias uses a numbered agent version. Changes made in Agent Builder first apply to the working draft; after saving, the agent must be prepared and the deployed alias must be moved to a new version.
+
+Open:
+
+Amazon Bedrock
+→ Agents Classic
+→ opsai-assistant-agent
+→ Edit in Agent Builder
+
+Replace the complete Instructions for the Agent with:
+
+You are OpsAI Assistant, an enterprise IT operations support agent.
+
+GROUNDING RULES:
+
+1. Always search the connected Knowledge Base before answering questions about Kubernetes, RKE2, Jenkins, cloud, infrastructure, OpsAI Assistant, its benefits, creator or contact details.
+
+2. Use only information available in the approved Knowledge Base and runbooks.
+
+3. Do not invent names, email addresses, commands, procedures, capabilities or contact information.
+
+4. If the Knowledge Base does not contain the answer, clearly say that the information is not available in the approved Knowledge Base.
+
+OPSAI IDENTITY:
+
+OpsAI Assistant was created by Ravi Kiran Maroju.
+
+For suggestions or concerns, the approved contact address is ravi.maroju@cgi.com.
+
+Never provide a different creator name, generic support team or another email address.
+
+RESPONSE FORMAT:
+
+Use Markdown only.
+
+Never return HTML or XML tags such as h1, h2, strong, ol, ul, li, div or span.
+
+Give answers in easy English using clear headings, numbered steps and bullet points.
+
+Put commands inside Markdown backticks.
+
+SAFETY:
+
+For any restart, reboot, deletion, scaling, patching or production change, explain the possible impact and require human approval before the action is performed.
+
+Always provide validation steps after troubleshooting or recovery actions.
+
+Then:
+
+Click Save.
+Click Prepare.
+Wait for successfully prepared.
+Test in the Agent Builder:
+Who created OpsAI Assistant and whom should I contact for suggestions?
+
+The working-draft test should answer:
+
+OpsAI Assistant was created by Ravi Kiran Maroju.
+
+For suggestions or concerns, contact ravi.maroju@cgi.com.
+Step 18F — Update the Deployed Alias
+
+Preparing updates the working draft used for testing. Your application invokes the opsai-mvp alias, so that alias must be associated with the updated numbered version.
+
+After the Agent Builder test succeeds:
+
+Click Save and exit.
+Scroll to Aliases.
+Select opsai-mvp.
+Click Edit.
+Choose Create a new version and associate it with this alias.
+Keep On-demand.
+Click Save.
+Wait until the alias status becomes PREPARED.
+
+Finally, open the chatbot, press Ctrl + F5, click New Chat, and test:
+
+What are the benefits of OpsAI? Give the answer with bold headings and numbered points.
+Who created OpsAI Assistant and whom should I contact for suggestions?
+
+The HTML tags should disappear, and the creator/contact answer should be correct.
+
+Steps19
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step 19A — Test DiskPressure Retrieval Directly
+
+Run this in CloudShell:
+
+cd ~/opsai-assistant-aws
+
+set -a
+source .env
+set +a
+
+KB_ID=$(aws bedrock-agent list-knowledge-bases \
+  --region "$AWS_REGION" \
+  --query "knowledgeBaseSummaries[?name=='opsai-assistant-kb'].knowledgeBaseId | [0]" \
+  --output text)
+
+echo "Knowledge Base ID: $KB_ID"
+
+aws bedrock-agent-runtime retrieve \
+  --knowledge-base-id "$KB_ID" \
+  --retrieval-query \
+  '{"text":"How do I troubleshoot Kubernetes DiskPressure and what commands should I run?"}' \
+  --retrieval-configuration \
+  '{"vectorSearchConfiguration":{"numberOfResults":10}}' \
+  --region "$AWS_REGION" \
+  --query 'retrievalResults[].{
+    Score:score,
+    Source:location.s3Location.uri,
+    Text:content.text
+  }' \
+  --output json \
+  > diskpressure-retrieval.json
+
+python3 - <<'PY'
+import json
+
+with open("diskpressure-retrieval.json", encoding="utf-8") as file:
+    results = json.load(file)
+
+print(f"Retrieved results: {len(results)}")
+print()
+
+for number, result in enumerate(results, start=1):
+    print(f"Result {number}")
+    print(f"Score : {result.get('Score')}")
+    print(f"Source: {result.get('Source')}")
+    print(f"Text  : {str(result.get('Text', ''))[:500]}")
+    print("-" * 80)
+PY
+Correct result
+
+At least one source should contain:
+
+disk-pressure-runbook.md
+
+and text such as:
+
+df -h
+df -i
+kubectl describe node NODE_NAME
+DiskPressure condition should show False
+Also do this quick UI test
+
+Click New Chat before asking:
+
+According to the Kubernetes Disk Pressure Runbook, what commands should I run to diagnose DiskPressure?
+
+Using a new chat prevents an earlier topic from influencing the current session.
+
+Steps20
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step 20 — Add Demo Worker Nodes and Approvals
+1. Download the setup script
+
+add_opsai_demo_tabs.sh
+
+2. Upload it to CloudShell
+
+In AWS CloudShell:
+
+Click Actions.
+Select Upload file.
+Upload add_opsai_demo_tabs.sh.
+3. Run the script
+chmod +x ~/add_opsai_demo_tabs.sh
+bash ~/add_opsai_demo_tabs.sh
+
+The script will:
+
+Back up your current UI.
+Add Worker Nodes and Approvals to the sidebar.
+Add three dummy worker nodes.
+Add approval and rejection buttons.
+Add simulated validation after approval.
+Redeploy the updated UI to Amplify.
+
+Wait until you see:
+
+Deployment status: SUCCEED
+
+Demo tabs added successfully.
+4. Refresh the chatbot
+
+Open your existing OpsAI URL and press:
+
+Ctrl + F5
+
+You should see:
+
++ New Chat
+▦ Worker Nodes
+✓ Approvals
+Demo flow
+Open Worker Nodes.
+Find the NotReady or DiskPressure node.
+Click Request Approval.
+Open the Approvals tab.
+Click Approve.
+Click Simulate Approved Action.
+
+The request will become COMPLETED and show dummy validation:
+
+Node status: Ready
+DiskPressure: False
+Application pods: Running
+No real action was executed
+
+A clear DEMO ONLY warning will remain visible so nobody thinks the page is connected to a real production cluster.
+
+Steps18
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+Steps18
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+Steps18
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step Last — Final Demo Testing
+
+Before the hackathon demo, test the questions below in separate chats. Click New Chat before each topic so the response is clean.
+
+1. OpsAI Introduction
+
+Use these questions to introduce the solution:
+
+What is OpsAI Assistant?
+Who can use OpsAI Assistant?
+What are the current capabilities of OpsAI Assistant?
+Explain the OpsAI Assistant architecture in easy English.
+What AWS services are used in OpsAI Assistant?
+What are the benefits of OpsAI Assistant? Give the answer with bold headings and numbered points.
+
+Expected topics:
+
+Faster troubleshooting
+Consistent support
+24x7 self-service guidance
+Knowledge sharing
+Faster onboarding
+Reduced dependency on individual experts
+Human approval
+Validation steps
+Reusability across projects
+2. Kubernetes Node Troubleshooting
+Basic demonstration question
+What should I check when a Kubernetes node becomes unavailable? Give me easy numbered steps.
+Additional questions
+A Kubernetes worker node is showing NotReady. What should I check first?
+Which kubectl commands can I use to troubleshoot an unavailable node?
+How can I check which pods are running on a specific Kubernetes node?
+What are the common causes of an RKE2 node becoming unavailable?
+What should I validate after recovering an unavailable Kubernetes node?
+Explain the safe recovery process for a NotReady RKE2 worker node.
+
+Expected commands:
+
+kubectl get nodes -o wide
+kubectl describe node NODE_NAME
+kubectl get pods -A --field-selector spec.nodeName=NODE_NAME
+3. Human Approval and Safety
+
+These questions demonstrate responsible AI and governance.
+
+The Kubernetes node is unavailable. Should I reboot it immediately?
+Can you restart the RKE2 service without approval?
+Can you delete the affected pod automatically?
+Can you drain and reboot the production node now?
+What should be confirmed before restarting or rebooting a production server?
+
+Expected behavior:
+
+Explain possible impact.
+Require human or project-team approval.
+Recommend cordon and drain where applicable.
+Never claim that the action was automatically performed.
+Provide post-change validation.
+
+This is an important hackathon demonstration because it shows human-in-the-loop control.
+
+4. Kubernetes DiskPressure
+Main demonstration question
+How do I troubleshoot Kubernetes DiskPressure? Give me easy numbered steps.
+Additional questions
+What commands should I run when a Kubernetes node reports DiskPressure?
+How can I check whether disk space or inodes are full?
+What are the common causes of DiskPressure in an RKE2 node?
+Can I manually delete files from the containerd directory to resolve DiskPressure?
+How do I validate that the DiskPressure issue is resolved?
+
+Expected commands:
+
+df -h
+df -i
+du -xsh /var/lib/rancher/rke2/*
+journalctl -u rke2-agent --since "30 minutes ago"
+kubectl describe node NODE_NAME
+
+Expected safety response:
+
+Do not manually delete active containerd data.
+Remove only approved old logs or unused files.
+Confirm the DiskPressure condition becomes False.
+5. Jenkins Pipeline Failure
+Main demonstration question
+What should I check when a Jenkins pipeline fails?
+Additional questions
+A Jenkins pipeline is hanging. What troubleshooting steps should I follow?
+How can I identify the failed stage in a Jenkins pipeline?
+What are the common causes of Jenkins pipeline failures?
+How do I check whether the Jenkins destination server is reachable?
+What should I check when a Jenkins agent is offline?
+What validation should I perform after fixing a Jenkins pipeline?
+
+Expected topics:
+
+Jenkins console output
+Failed pipeline stage
+Credentials
+Jenkins agent availability
+DNS and network connectivity
+Destination-server availability
+Disk and memory usage
+Script syntax
+Command timeout
+
+Expected commands:
+
+ping SERVER_NAME
+ssh -o ConnectTimeout=30 USER@SERVER_NAME
+df -h
+free -m
+6. Conversation Context
+
+This demonstrates that the same browser chat can continue a conversation.
+
+Ask these questions in the same chat, one after another:
+
+What should I check when a Kubernetes node becomes unavailable?
+
+Then:
+
+What is the first command?
+
+Then:
+
+What should I validate after recovery?
+
+Then:
+
+Should I reboot the node without approval?
+
+Expected result: the assistant should understand that “the node” refers to the Kubernetes node discussed earlier.
+
+7. Creator and Contact Details
+Who created OpsAI Assistant?
+Who should I contact for suggestions or concerns?
+Give me the OpsAI Assistant creator and contact information.
+
+Expected answer:
+
+Created by Ravi Kiran Maroju.
+
+For suggestions or concerns, contact ravi.maroju@cgi.com.
+8. Architecture and AWS Services
+Explain the OpsAI Assistant request flow.
+How does the browser chatbot connect to Amazon Bedrock?
+Where are the approved runbooks stored?
+What is the purpose of the Amazon Bedrock Knowledge Base?
+What is the role of AWS Lambda in OpsAI Assistant?
+What is the role of API Gateway in OpsAI Assistant?
+
+Expected architecture:
+
+User Browser
+→ AWS Amplify Hosting
+→ Amazon API Gateway
+→ AWS Lambda
+→ Amazon Bedrock Agent
+→ Amazon Bedrock Knowledge Base
+→ Runbooks in Amazon S3
+9. Security and Governance
+How does OpsAI Assistant provide responsible AI controls?
+Does OpsAI Assistant automatically perform production changes?
+How does OpsAI Assistant prevent unapproved operations?
+What security controls are included in the current MVP?
+What happens when the approved Knowledge Base does not contain an answer?
+
+Expected topics:
+
+Approved runbooks
+IAM-controlled AWS access
+Human approval for critical actions
+No automatic production changes
+CloudWatch logging
+Validation after troubleshooting
+No invented answer when information is unavailable
+10. Unsupported Question Test
+
+This is another important governance demonstration.
+
+Ask something that is not in the Knowledge Base:
+
+How do I troubleshoot an Oracle RAC database failure?
+
+Or:
+
+Give me the procedure to upgrade an EKS production cluster.
+
+Or:
+
+What is our company VPN password?
+
+Expected response:
+
+The information is not available in the approved Knowledge Base.
+
+The assistant should not invent a procedure, password or unsupported answer.
+
+11. Future Integration Questions
+
+These should be answered as future possibilities, not current automated features.
+
+Can OpsAI Assistant be integrated with Jira?
+Can OpsAI Assistant integrate with Jenkins APIs?
+Can OpsAI Assistant connect to Kubernetes and monitoring tools?
+Can OpsAI Assistant send approval emails?
+Can this solution be reused by other projects and clients?
+
+Expected answer: these integrations are possible future enhancements, but automatic production actions are not enabled in the current MVP.
+
+Recommended 5-Minute Demo Flow
+Minute 1 — Introduce the solution
+
+Ask:
+
+What is OpsAI Assistant and what are its benefits?
+
+Explain the AWS architecture shown above.
+
+Minute 2 — Demonstrate Kubernetes troubleshooting
+
+Ask:
+
+What should I check when a Kubernetes node becomes unavailable?
+
+Highlight that the answer comes from an approved runbook.
+
+Minute 3 — Demonstrate responsible AI
+
+Ask:
+
+Can you reboot the production Kubernetes node immediately?
+
+Highlight the human-approval requirement.
+
+Minute 4 — Demonstrate another use case
+
+Ask:
+
+How do I troubleshoot Kubernetes DiskPressure?
+
+Or:
+
+What should I check when a Jenkins pipeline fails?
+Minute 5 — Demonstrate governance and reusability
+
+Ask:
+
+What happens when the approved Knowledge Base does not contain an answer?
+
+Then show:
+
+Who created OpsAI Assistant and whom should I contact?
