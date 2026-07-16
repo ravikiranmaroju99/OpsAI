@@ -2911,6 +2911,273 @@ What should I check when a Kubernetes node becomes unavailable?
 
 You should see the answer inside the browser-based chatbot page
 
+____________________________________
+
+Step 16D — Update CGI Branding
+
+Run this in CloudShell:
+
+cd ~/opsai-assistant-aws
+
+# Replace the existing footer text
+sed -i \
+  's|<p>Powered by AWS Bedrock</p>|<p class="cgi-powered">Powered by CGI</p>|' \
+  app/web/index.html
+
+# Add bold red CGI styling
+cat >> app/web/styles.css <<'EOF'
+
+.cgi-powered {
+    margin-top: 10px;
+    color: #ff0000;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+}
+EOF
+
+# Verify the change
+grep -n "Powered by CGI" app/web/index.html
+tail -n 10 app/web/styles.css
+Step 16E — Redeploy the Updated UI
+
+Run:
+
+cd ~/opsai-assistant-aws
+
+set -a
+source .env
+set +a
+
+# Rebuild the frontend ZIP
+rm -f app/opsai-assistant-ui.zip
+
+cd app/web
+zip -qr ../opsai-assistant-ui.zip .
+cd ../..
+
+# Create a new Amplify deployment
+DEPLOYMENT_OUTPUT=$(aws amplify create-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --region "$AWS_REGION" \
+  --output json)
+
+JOB_ID=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["jobId"])')
+
+UPLOAD_URL=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["zipUploadUrl"])')
+
+# Upload the updated UI
+curl -sS \
+  --upload-file app/opsai-assistant-ui.zip \
+  "$UPLOAD_URL"
+
+# Start deployment
+aws amplify start-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --job-id "$JOB_ID" \
+  --region "$AWS_REGION" \
+  >/dev/null
+
+echo "Waiting for deployment..."
+
+while true
+do
+  STATUS=$(aws amplify get-job \
+    --app-id "$AMPLIFY_APP_ID" \
+    --branch-name "$AMPLIFY_BRANCH_NAME" \
+    --job-id "$JOB_ID" \
+    --region "$AWS_REGION" \
+    --query 'job.summary.status' \
+    --output text)
+
+  echo "Deployment status: $STATUS"
+
+  case "$STATUS" in
+    SUCCEED)
+      break
+      ;;
+    FAILED|CANCELLED)
+      echo "Deployment failed."
+      exit 1
+      ;;
+    *)
+      sleep 10
+      ;;
+  esac
+done
+
+echo
+echo "Updated OpsAI URL:"
+echo "$AMPLIFY_URL"
+
+After it shows SUCCEED, refresh the browser using Ctrl + F5. The bottom-left corner will show:
+
+Powered by CGI
+
+in bold red text.
+
+________________________________________
+
+Add the creator and contact details below Powered by CGI in the bottom-left corner.
+
+Step 16F — Add Creator and Contact Details
+
+Run:
+
+cd ~/opsai-assistant-aws
+
+python3 - <<'PY'
+from pathlib import Path
+
+html_file = Path("app/web/index.html")
+html = html_file.read_text(encoding="utf-8")
+
+old_content = '<p class="cgi-powered">Powered by CGI</p>'
+
+new_content = '''<p class="cgi-powered">Powered by CGI</p>
+
+                <div class="creator-information">
+                    <p>
+                        Created by
+                        <strong>Ravi Kiran Maroju</strong>
+                    </p>
+
+                    <p>
+                        For suggestions or concerns, reach out to
+                        <a href="mailto:ravi.maroju@cgi.com">
+                            ravi.maroju@cgi.com
+                        </a>
+                    </p>
+                </div>'''
+
+if new_content in html:
+    print("Creator information is already present.")
+elif old_content in html:
+    html = html.replace(old_content, new_content)
+    html_file.write_text(html, encoding="utf-8")
+    print("Creator information added successfully.")
+else:
+    raise SystemExit("Unable to find the Powered by CGI footer.")
+PY
+
+cat >> app/web/styles.css <<'EOF'
+
+.creator-information {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+    color: #dbeafe;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.creator-information p {
+    margin: 5px 0;
+}
+
+.creator-information strong {
+    color: #ffffff;
+    font-weight: 700;
+}
+
+.creator-information a {
+    color: #93c5fd;
+    font-weight: 600;
+    text-decoration: none;
+    word-break: break-word;
+}
+
+.creator-information a:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}
+EOF
+
+grep -n -A15 "Powered by CGI" app/web/index.html
+
+It will display:
+
+Powered by CGI
+
+Created by Ravi Kiran Maroju
+
+For suggestions or concerns, reach out to
+ravi.maroju@cgi.com
+
+The email address will also be clickable.
+
+Step 16G — Redeploy the Updated UI
+
+Run:
+
+cd ~/opsai-assistant-aws
+
+set -a
+source .env
+set +a
+
+rm -f app/opsai-assistant-ui.zip
+
+cd app/web
+zip -qr ../opsai-assistant-ui.zip .
+cd ../..
+
+DEPLOYMENT_OUTPUT=$(aws amplify create-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --region "$AWS_REGION" \
+  --output json)
+
+JOB_ID=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["jobId"])')
+
+UPLOAD_URL=$(echo "$DEPLOYMENT_OUTPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["zipUploadUrl"])')
+
+curl -sS \
+  --upload-file app/opsai-assistant-ui.zip \
+  "$UPLOAD_URL"
+
+aws amplify start-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --job-id "$JOB_ID" \
+  --region "$AWS_REGION" \
+  >/dev/null
+
+while true
+do
+  STATUS=$(aws amplify get-job \
+    --app-id "$AMPLIFY_APP_ID" \
+    --branch-name "$AMPLIFY_BRANCH_NAME" \
+    --job-id "$JOB_ID" \
+    --region "$AWS_REGION" \
+    --query 'job.summary.status' \
+    --output text)
+
+  echo "Deployment status: $STATUS"
+
+  case "$STATUS" in
+    SUCCEED)
+      break
+      ;;
+    FAILED|CANCELLED)
+      echo "Deployment failed."
+      exit 1
+      ;;
+    *)
+      sleep 10
+      ;;
+  esac
+done
+
+echo "Updated OpsAI URL: $AMPLIFY_URL"
+
+After SUCCEED, open the URL and press Ctrl + F5 to load the updated design.
 
 Steps17
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
