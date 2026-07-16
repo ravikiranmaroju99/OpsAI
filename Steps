@@ -680,11 +680,36 @@ Then select the available US Nova Lite inference profile and click Apply. Amazon
 Do not run the question yet
 
 
+___________________
+
+Step 9B — Generate the AI Answer
+
+In the prompt box, enter:
+
+Using only the approved runbook, what should I check when a Kubernetes node becomes unavailable? Give the answer in easy English and numbered steps.
+
+Then click Run.
+
+You should receive a clear AI-generated answer based on the Kubernetes runbook, with source references.
+
+Run only this test
+
+
 
 Steps10
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+Step 10A — Open the Bedrock Agent Creation Page
 
+For this hackathon MVP, we will use Agents Classic because it is the quickest way to connect the Knowledge Base now and add Lambda actions later. Agents can decide whether to query a Knowledge Base or call an action group.
+
+Click Close at the top-right.
+From the left menu, under Build, click:
+Agents Classic
+Click:
+Create agent
+
+Do not enter any details yet. Send me the Create agent screen.
 
 
 Steps11
