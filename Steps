@@ -630,13 +630,54 @@ Completed
 
 Steps8
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step 8 — Test Knowledge Retrieval
+Click Test at the top-right.
+In the test panel, turn off:
+Generate responses
 
+This tests whether Bedrock can retrieve information directly from your uploaded runbooks without using an AI model.
+
+Enter this question:
+What should I check when a Kubernetes node becomes unavailable?
+Click Run.
+Expected result
+
+You should see information such as:
+
+Run kubectl get nodes -o wide
+Describe the affected node
+Check pods running on the node
+Check CPU, memory and disk usage
+Check the RKE2 service
+Cordon and drain before approved maintenance
+
+The source should point to:
+
+kubernetes-node-unavailable.md
+
+Run only this test
 
 
 
 Steps9
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step 9A — Select the AI Model for Answer Generation
 
+Do only this part now:
+
+On the left, select:
+Standard retrieval with answer generation
+Click:
+Select model
+Choose:
+Provider: Amazon
+Model: Nova Lite
+If AWS asks for an inference option, choose:
+Inference profiles
+
+Then select the available US Nova Lite inference profile and click Apply. Amazon Bedrock Knowledge Bases can use a foundation model or inference profile to generate an answer from retrieved information.
+
+Do not run the question yet
 
 
 
@@ -660,4 +701,29 @@ Steps12
 
 
 Steps13
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+Steps14
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+Steps15
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+Steps16
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+Steps17
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+Steps18
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
