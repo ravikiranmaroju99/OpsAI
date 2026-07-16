@@ -796,6 +796,60 @@ Click Add or Save in the popup.
 Complete only this step
 
 
+_________________________
+
+Step 10E — Connect the Knowledge Base
+
+Do not click Prepare yet.
+
+Scroll down until you see Knowledge bases.
+Click Add.
+Select:
+opsai-assistant-kb
+For the Knowledge Base instructions, enter:
+Use this knowledge base to answer questions about Kubernetes, RKE2, Jenkins, cloud and infrastructure troubleshooting using approved runbooks.
+Click Add or Save in the popup.
+
+Complete only this step
+
+
+_________________________________
+
+Step 10F — Prepare the Agent
+
+Click Prepare at the top.
+
+Wait until you see a green success message similar to:
+
+Agent preparation completed successfully.
+
+Do not test the agent yet.
+
+_________________________________
+
+Step 10G — Test the Agent
+
+In the Test Agent box on the right, enter:
+
+What should I check when a Kubernetes node becomes unavailable? Give me easy numbered steps.
+
+Then click Run.
+
+Expected result
+
+The agent should answer using your approved Kubernetes runbook and include steps such as:
+
+Check node status
+Describe the node
+Check pods on the node
+Check CPU, memory and disk
+Check the RKE2 service
+Cordon and drain before approved maintenance
+Validate that the node returns to Ready
+
+Run only this test
+
+
 Steps11
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
