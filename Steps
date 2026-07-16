@@ -711,6 +711,48 @@ Create agent
 
 Do not enter any details yet. Send me the Create agent screen.
 
+_____________________________
+
+Step 10B — Create the OpsAI Agent
+
+Enter these details:
+
+Name
+
+opsai-assistant-agent
+
+Description
+
+AI operations assistant that uses approved runbooks to support Kubernetes, Jenkins, cloud and infrastructure troubleshooting.
+
+Leave this unchecked:
+
+Enable multi-agent collaboration
+
+Now click Create.
+
+After the agent page opens, do not configure anything yet.
+
+_____________________
+
+Step 10C — Select the Agent Model
+
+Keep this selected:
+
+Create default role
+
+AWS will create the service role needed by the agent.
+
+Now:
+
+Click Select model.
+Choose Amazon.
+Select Nova Lite.
+Keep On-demand if shown.
+Click Apply.
+
+Do not enter the agent instructions yet.
+
 
 Steps11
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
