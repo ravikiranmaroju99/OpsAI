@@ -5611,3 +5611,159 @@ The Lambda command should return ResourceNotFoundException. The other commands s
 Run the cleanup only after saving your screenshots, source package and Steps 1–20 document
 
 
++++++++++++++++++
+
+Your setup is serverless. You do not have an EC2 server or database running continuously. Most services charge only when users ask questions, invoke the API, transfer data, or store files. AWS generally uses pay-as-you-go pricing without long-term commitments.
+
+Expected cost for three days
+
+Assuming:
+
+Only four small Knowledge Base documents
+Amazon Nova Lite
+S3 Vectors
+A small static Amplify website
+No Cognito, WAF or provisioned throughput
+Normal hackathon/demo usage
+Usage for three days	Estimated cost before tax	Safe budget
+Resources remain idle	Less than ₹5	₹10
+Around 100 chatbot questions	₹5–₹25	₹50
+Around 500 chatbot questions	₹20–₹100	₹150
+Around 1,000 chatbot questions	₹40–₹250	₹300
+
+Therefore, for your hackathon, a sensible estimate is:
+
+Likely cost: below ₹50 for normal demo usage.
+Safe maximum budget: ₹300 for three days.
+
+These are estimates rather than an AWS quotation. They use an exchange rate of approximately ₹96.35 for USD 1; AWS invoice conversion and taxes may make the final amount slightly different.
+
+Where the cost comes from
+1. Amazon Nova Lite
+
+This is likely to be the main cost.
+
+Nova Lite is charged according to:
+
+Number of input tokens
+Retrieved runbook content sent to the model
+Number of output tokens generated
+
+AWS’s published example uses:
+
+Input:  $0.00006 per 1,000 tokens
+Output: $0.00024 per 1,000 tokens
+
+A simple question using approximately 2,000 input tokens and 500 output tokens costs around ₹0.02–₹0.03 for one model call. Bedrock Agents can make more than one model call and use additional context, so budgeting ₹0.03–₹0.20 per question is safer.
+
+2. Titan Text Embeddings V2
+
+Titan converts your documents and questions into searchable vectors.
+
+Its published price is:
+
+$0.00002 per 1,000 input tokens
+
+Because you currently have only four small Markdown documents, the initial document-indexing cost should be extremely small—much less than ₹1.
+
+3. Amazon S3 Vectors
+
+S3 Vectors charges for:
+
+Vector storage: $0.06 per GB per month
+Vector uploads: $0.20 per GB
+Queries:        $2.50 per 1 million queries
+
+Your vector data is very small, so three days of storage and normal demo queries should cost only a few paise.
+
+4. AWS Lambda
+
+Lambda charges for:
+
+Number of requests
+Memory allocated
+Execution time
+
+The monthly free tier includes one million requests and 400,000 GB-seconds. Your 256-MB Lambda running for a few hundred demo questions will usually remain inside this allowance, assuming the account is eligible and has not already consumed it.
+
+5. API Gateway
+
+The HTTP API costs approximately:
+
+$1 for 1 million requests
+
+Even 1,000 chatbot requests would be approximately $0.001, or around ₹0.10 before tax. Eligible accounts may also receive one million HTTP API requests in the monthly free tier.
+
+6. AWS Amplify Hosting
+
+Amplify charges mainly for:
+
+Storage:          $0.023 per GB per month
+Data transferred: $0.15 per GB
+Build minutes:    $0.01 per minute outside the free allowance
+
+Your UI is a small static application deployed manually, so storage and normal hackathon page traffic should be negligible. Amplify has no mandatory monthly minimum for this setup.
+
+7. CloudWatch Logs
+
+CloudWatch charges according to the volume of logs generated and stored. AWS shows log ingestion pricing around $0.50 per GB in US East. A few hundred Lambda executions normally generate only a tiny amount of log data.
+
+Will keeping it idle cost money?
+
+Keeping it available but unused for three days should cost almost nothing.
+
+Small recurring storage charges can remain for:
+
+Amplify application files
+S3 runbook files
+S3 vector data
+CloudWatch logs already stored
+
+Lambda, API Gateway and Nova Lite do not continuously run and charge by the hour in your configuration.
+
+Important things that can increase the cost
+
+Avoid enabling these for the demo:
+
+Bedrock Provisioned Throughput
+AWS WAF on Amplify
+Large Knowledge Base documents
+Very long answers
+Large numbers of automated test questions
+Excessive CloudWatch debug logging
+Multiple unused Amplify applications
+A different, more expensive foundation model
+
+Amplify WAF alone can add $15 per month, before WAF request charges, so leave it disabled for this short demo.
+
+GST
+
+The estimate above is before tax. AWS India billing may include applicable GST depending on the account’s seller of record and tax configuration. AWS documentation for India transactions states that purchases can carry 18% GST.
+
+For example:
+
+₹300 estimated AWS usage
++ 18% GST
+= approximately ₹354
+Recommended action
+
+Create an AWS Budget of:
+
+Budget amount: $5
+Approximately: ₹480 before tax
+
+That is more than sufficient for this three-day MVP and provides a safety alert if something unexpected starts generating costs.
+
+A cleanup reminder after three days would also prevent accidental ongoing storage charges; say “remind me to clean up in three days” to schedule it.
+
+
+
+++++++++++++++++++++++++++
+https://github.com/ravikiranmaroju99/OpsAI 
+
+https://github.com/ravikiranmaroju99/OpsAI.git
+
+gh repo clone ravikiranmaroju99/OpsAI
+
+git@github.com:ravikiranmaroju99/OpsAI.git
+
