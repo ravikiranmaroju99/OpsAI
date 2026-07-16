@@ -4981,8 +4981,581 @@ echo "Open: $AMPLIFY_URL"
 echo "Refresh the browser using Ctrl + F5."
 
 
-Steps18
+Steps21
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Step 20 — Add Infrastructure Assets and Redeploy the UI
+
+Run the complete block in AWS CloudShell:
+
+cd ~/opsai-assistant-aws
+
+set -e
+export AWS_PAGER=""
+
+# Load the AWS and Amplify variables.
+set -a
+source .env
+set +a
+
+# Confirm the required files exist.
+if [[ ! -f app/web/demo-ops.js ]]; then
+    echo "ERROR: app/web/demo-ops.js was not found."
+    exit 1
+fi
+
+if [[ ! -f app/web/demo-ops.css ]]; then
+    echo "ERROR: app/web/demo-ops.css was not found."
+    exit 1
+fi
+
+# Create backups before changing the UI.
+BACKUP_TIME=$(date +%Y%m%d-%H%M%S)
+
+cp app/web/demo-ops.js \
+   "app/web/demo-ops.js.backup-$BACKUP_TIME"
+
+cp app/web/demo-ops.css \
+   "app/web/demo-ops.css.backup-$BACKUP_TIME"
+
+echo "Backup completed: $BACKUP_TIME"
+
+# ------------------------------------------------------------
+# Update the Infrastructure Assets JavaScript
+# ------------------------------------------------------------
+
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+file_path = Path("app/web/demo-ops.js")
+content = file_path.read_text(encoding="utf-8")
+
+new_nodes = r"""  const nodes = [
+    {
+      name: 'lin-advqa-rke2-node1.ams.com',
+      assetType: 'RKE2 Worker',
+      environment: 'QA',
+      status: 'Compliant',
+      condition: 'Healthy',
+      workloads: '18 pods',
+      severity: 'None',
+      issue: 'No active issue',
+      action: 'No action required',
+      impact: 'None'
+    },
+    {
+      name: 'lin-advqa-rke2-node2.ams.com',
+      assetType: 'RKE2 Worker',
+      environment: 'QA',
+      status: 'NotReady',
+      condition: 'RKE2 agent unavailable',
+      workloads: '7 pods',
+      severity: 'High',
+      issue: 'The RKE2 agent is not responding and application pods may be affected.',
+      action: 'Cordon, drain and restart the RKE2 agent',
+      impact: 'Pods may move to other workers. Application impact is possible if sufficient capacity is not available.'
+    },
+    {
+      name: 'lin-advqa-rke2-node3.ams.com',
+      assetType: 'RKE2 Worker',
+      environment: 'QA',
+      status: 'Vulnerable',
+      condition: 'DiskPressure=True',
+      workloads: '14 pods',
+      severity: 'High',
+      issue: 'Root filesystem usage is 92% and security updates are pending.',
+      action: 'Clean approved old logs, apply security updates and validate DiskPressure',
+      impact: 'Application pods may be affected if the filesystem becomes full.'
+    },
+    {
+      name: 'lin-advdev-rke2-node6.ams.com',
+      assetType: 'RKE2 Worker',
+      environment: 'Development',
+      status: 'PatchRequired',
+      condition: 'Kernel security updates pending',
+      workloads: '12 pods',
+      severity: 'Critical',
+      issue: 'Critical operating-system and kernel security updates are pending.',
+      action: 'Cordon, drain, apply approved patches and reboot during the maintenance window',
+      impact: 'Workloads will move to other available workers during maintenance.'
+    },
+    {
+      name: 'lin-advdev-rke2-node7.ams.com',
+      assetType: 'RKE2 Worker',
+      environment: 'Development',
+      status: 'RebootRequired',
+      condition: 'Kernel updated',
+      workloads: '9 pods',
+      severity: 'High',
+      issue: 'Security patches are installed, but the updated kernel is not active.',
+      action: 'Cordon, drain and reboot the node after downtime approval',
+      impact: 'The node will be temporarily unavailable while it reboots.'
+    },
+    {
+      name: 'lin-advdev-rke2-node17.ams.com',
+      assetType: 'RKE2 Worker',
+      environment: 'Development',
+      status: 'Vulnerable',
+      condition: 'OpenSSL updates pending',
+      workloads: '11 pods',
+      severity: 'High',
+      issue: 'Security updates for OpenSSL and operating-system libraries are pending.',
+      action: 'Apply approved security updates and restart affected services',
+      impact: 'A brief service interruption may occur when affected services restart.'
+    },
+    {
+      name: 'lin-adv-ran-1rke2.ams.com',
+      assetType: 'RKE2 Control Plane',
+      environment: 'Management',
+      status: 'PatchRequired',
+      condition: 'Security remediation required',
+      workloads: 'Control plane',
+      severity: 'Critical',
+      issue: 'Remotely exploitable vulnerabilities with exposure paths require remediation.',
+      action: 'Apply approved security patches and reboot one control-plane node at a time',
+      impact: 'The cluster should remain available when quorum is maintained and nodes are patched sequentially.'
+    },
+    {
+      name: 'lin-adv-ran-2rke2.ams.com',
+      assetType: 'RKE2 Control Plane',
+      environment: 'Management',
+      status: 'Compliant',
+      condition: 'Healthy',
+      workloads: 'Control plane',
+      severity: 'None',
+      issue: 'Required security patches are applied and validation has passed.',
+      action: 'No action required',
+      impact: 'None'
+    },
+    {
+      name: 'lin-adv-ran-3rke2.ams.com',
+      assetType: 'RKE2 Control Plane',
+      environment: 'Management',
+      status: 'RebootRequired',
+      condition: 'Patching completed',
+      workloads: 'Control plane',
+      severity: 'High',
+      issue: 'Security patches are installed and a reboot is required to activate the updated kernel.',
+      action: 'Reboot after confirming cluster quorum and maintenance approval',
+      impact: 'Temporary control-plane capacity reduction during the reboot.'
+    },
+    {
+      name: 'lin-advqa-nfs.ams.com',
+      assetType: 'Linux NFS Server',
+      environment: 'QA',
+      status: 'PatchRequired',
+      condition: 'NFS and kernel updates pending',
+      workloads: 'NFS storage',
+      severity: 'Critical',
+      issue: 'Operating-system, kernel and NFS security updates are pending.',
+      action: 'Confirm application downtime, apply patches and reboot the server',
+      impact: 'Applications using this NFS server may be unavailable during the reboot.'
+    },
+    {
+      name: 'lin-rundeck-new.ams.com',
+      assetType: 'Automation Server',
+      environment: 'Shared Services',
+      status: 'Vulnerable',
+      condition: 'OpenSSH and Python updates pending',
+      workloads: 'Ansible and Rundeck',
+      severity: 'High',
+      issue: 'Security updates are required for OpenSSH, Python and operating-system packages.',
+      action: 'Apply approved updates and validate Rundeck and Ansible jobs',
+      impact: 'Automation jobs may be unavailable while services are restarted.'
+    },
+    {
+      name: 'w10jenkinstest1.ams.com',
+      assetType: 'Windows Jenkins Server',
+      environment: 'Testing',
+      status: 'PatchRequired',
+      condition: 'Windows cumulative update pending',
+      workloads: 'Jenkins',
+      severity: 'Critical',
+      issue: 'Critical Windows security and cumulative updates are pending.',
+      action: 'Apply Windows updates and schedule a controlled reboot',
+      impact: 'Jenkins jobs will be unavailable during the reboot.'
+    },
+    {
+      name: 'w10jenkinstest.ams.com',
+      assetType: 'Windows Application Server',
+      environment: 'Testing',
+      status: 'RebootRequired',
+      condition: 'Windows patches installed',
+      workloads: 'Application services',
+      severity: 'High',
+      issue: 'Windows security patches are installed, but a reboot is pending.',
+      action: 'Confirm application downtime and reboot the server',
+      impact: 'Application services will be temporarily unavailable.'
+    },
+    {
+      name: 'lin-advperf-ub-master1.ams.com',
+      assetType: 'Ubuntu RKE2 Server',
+      environment: 'Performance',
+      status: 'Vulnerable',
+      condition: 'Ubuntu security updates pending',
+      workloads: 'RKE2 control plane',
+      severity: 'High',
+      issue: 'Ubuntu operating-system and container-runtime updates are pending.',
+      action: 'Apply approved updates and validate RKE2 services',
+      impact: 'Control-plane capacity may be temporarily reduced during maintenance.'
+    },
+    {
+      name: 'lin-advtech-rke2ub-local1.ams.com',
+      assetType: 'Ubuntu RKE2 Server',
+      environment: 'Technology',
+      status: 'Compliant',
+      condition: 'Healthy',
+      workloads: 'RKE2 control plane and worker',
+      severity: 'None',
+      issue: 'Security patches are current and system validation has passed.',
+      action: 'No action required',
+      impact: 'None'
+    }
+  ];"""
+
+# Replace the existing worker-node or infrastructure-asset list.
+content, count = re.subn(
+    r"  const nodes = \[[\s\S]*?\n  \];",
+    new_nodes,
+    content,
+    count=1
+)
+
+if count != 1:
+    raise SystemExit(
+        "ERROR: Unable to locate and replace the existing nodes list."
+    )
+
+# Update the visible navigation and page wording.
+replacements = {
+    "▦ Worker Nodes":
+        "▦ Infrastructure Assets",
+
+    "'Worker Node Health'":
+        "'Infrastructure Health'",
+
+    "'Worker node health and operational status'":
+        "'Patch, vulnerability and worker-node status'",
+
+    "'Dummy cluster health for the demo'":
+        "'Patch, vulnerability and worker-node status'",
+
+    "<h2>Worker Nodes</h2>":
+        "<h2>Infrastructure Assets</h2>",
+
+    "<span>Total workers</span>":
+        "<span>Total assets</span>",
+
+    "Reset Demo":
+        "Reset View",
+
+    "Simulate Approved Action":
+        "Run Approved Action",
+
+    "OpsAI Demo User":
+        "OpsAI User",
+
+    "Demo Project Approver":
+        "Project Approver",
+
+    "Demo validation":
+        "Validation results",
+
+    "Dummy human-in-the-loop workflow.":
+        "Human approval workflow for operational changes.",
+
+    "Open Worker Nodes and request approval for a dummy issue.":
+        "Open Infrastructure Assets and request approval for a remediation item.",
+
+    "Open Worker Nodes and request approval for an item.":
+        "Open Infrastructure Assets and request approval for a remediation item.",
+
+    "No real action was executed":
+        "Remediation workflow completed"
+}
+
+for old, new in replacements.items():
+    content = content.replace(old, new)
+
+# Update the asset-card heading.
+old_header = """<div><h3>${esc(node.name)}</h3><p>Worker</p></div>"""
+
+new_header = """<div>
+            <h3>${esc(node.name)}</h3>
+            <p>${esc(node.assetType)}</p>
+          </div>"""
+
+if old_header in content:
+    content = content.replace(old_header, new_header)
+
+# Update the card metrics.
+old_metrics = """<div class="demo-node-metrics">
+          <div><span>Condition</span><strong>${esc(node.condition)}</strong></div>
+          <div><span>Pods</span><strong>${node.pods}</strong></div>
+        </div>"""
+
+new_metrics = """<div class="demo-node-metrics">
+          <div>
+            <span>Condition</span>
+            <strong>${esc(node.condition)}</strong>
+          </div>
+          <div>
+            <span>Environment</span>
+            <strong>${esc(node.environment)}</strong>
+          </div>
+          <div>
+            <span>Workloads</span>
+            <strong>${esc(node.workloads)}</strong>
+          </div>
+          <div>
+            <span>Severity</span>
+            <strong>${esc(node.severity)}</strong>
+          </div>
+        </div>"""
+
+if old_metrics in content:
+    content = content.replace(old_metrics, new_metrics)
+elif "node.workloads" not in content:
+    raise SystemExit(
+        "ERROR: Unable to locate the card metrics section."
+    )
+
+# Update the recovered asset status.
+content = re.sub(
+    r"""function currentNode\(node\) \{[\s\S]*?\n  \}""",
+    """function currentNode(node) {
+    return recovered.includes(node.name)
+      ? {
+          ...node,
+          status: 'Compliant',
+          condition: 'Healthy',
+          severity: 'None',
+          issue: 'Remediation completed and validated',
+          action: 'No action required'
+        }
+      : node;
+  }""",
+    content,
+    count=1
+)
+
+# Update the completion validation result.
+content, validation_count = re.subn(
+    r"""    item\.validation = \[[\s\S]*?\n    \];""",
+    """    item.validation = [
+      'Asset status: Compliant',
+      'Required security patches: Applied',
+      'Critical vulnerabilities: Resolved',
+      'Service validation: Passed',
+      'Remediation workflow: Completed'
+    ];""",
+    content,
+    count=1
+)
+
+if validation_count != 1:
+    raise SystemExit(
+        "ERROR: Unable to update the approval validation results."
+    )
+
+# Remove subtitles under the Infrastructure Assets heading.
+content = re.sub(
+    r"""<div>
+        <h2>(?:Infrastructure Assets|Worker Nodes)</h2>
+        <p>[^<]*</p>
+        </div>""",
+    r"<div><h2>Infrastructure Assets</h2></div>",
+    content,
+    flags=re.VERBOSE
+)
+
+content = re.sub(
+    r"""<div><h2>(?:Infrastructure Assets|Worker Nodes)</h2>
+        <p>[^<]*</p></div>""",
+    "<div><h2>Infrastructure Assets</h2></div>",
+    content,
+    flags=re.VERBOSE
+)
+
+# Remove warning or information boxes from both infrastructure
+# and approval pages.
+content = re.sub(
+    r'<div class="demo-warning">[\s\S]*?</div>',
+    "",
+    content
+)
+
+file_path.write_text(content, encoding="utf-8")
+
+print("Infrastructure Assets UI updated successfully.")
+print("Total infrastructure assets configured: 15")
+PY
+
+# ------------------------------------------------------------
+# Add the infrastructure status colours
+# ------------------------------------------------------------
+
+if ! grep -q "Infrastructure patch and vulnerability statuses" \
+     app/web/demo-ops.css
+then
+cat >> app/web/demo-ops.css <<'EOF'
+
+/* Infrastructure patch and vulnerability statuses */
+
+.demo-status.compliant {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.demo-status.patchrequired {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.demo-status.rebootrequired {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.demo-status.vulnerable {
+    background: #ffedd5;
+    color: #9a3412;
+}
+
+.demo-status.notready {
+    background: #fee2e2;
+    color: #991b1b;
+}
+EOF
+fi
+
+# ------------------------------------------------------------
+# Validate the updated files
+# ------------------------------------------------------------
+
+node --check app/web/demo-ops.js
+
+echo
+echo "Checking configured infrastructure assets..."
+
+ASSET_COUNT=$(grep -c "assetType:" app/web/demo-ops.js)
+
+echo "Infrastructure asset count: $ASSET_COUNT"
+
+if [[ "$ASSET_COUNT" -ne 15 ]]; then
+    echo "ERROR: Expected 15 infrastructure assets."
+    exit 1
+fi
+
+echo
+echo "Checking that the unwanted wording is removed..."
+
+if grep -nE \
+   "Sample operational data|PROTOTYPE|DEMO ONLY|Dummy data|No live cluster" \
+   app/web/demo-ops.js
+then
+    echo "ERROR: Unwanted wording is still present."
+    exit 1
+else
+    echo "Confirmed: unwanted wording is removed."
+fi
+
+echo
+echo "Configured statuses:"
+
+grep -oE \
+"status: '(Compliant|PatchRequired|RebootRequired|Vulnerable|NotReady)'" \
+app/web/demo-ops.js |
+sort |
+uniq -c
+
+# ------------------------------------------------------------
+# Package the updated UI
+# ------------------------------------------------------------
+
+rm -f app/opsai-assistant-ui.zip
+
+(
+    cd app/web
+    zip -qr ../opsai-assistant-ui.zip .
+)
+
+echo
+echo "UI package created:"
+ls -lh app/opsai-assistant-ui.zip
+
+# ------------------------------------------------------------
+# Create and start the Amplify deployment
+# ------------------------------------------------------------
+
+DEPLOYMENT_OUTPUT=$(aws amplify create-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --region "$AWS_REGION" \
+  --output json)
+
+JOB_ID=$(echo "$DEPLOYMENT_OUTPUT" |
+  python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["jobId"])')
+
+UPLOAD_URL=$(echo "$DEPLOYMENT_OUTPUT" |
+  python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["zipUploadUrl"])')
+
+echo "Amplify Job ID: $JOB_ID"
+
+curl -sS \
+  --upload-file app/opsai-assistant-ui.zip \
+  "$UPLOAD_URL"
+
+aws amplify start-deployment \
+  --app-id "$AMPLIFY_APP_ID" \
+  --branch-name "$AMPLIFY_BRANCH_NAME" \
+  --job-id "$JOB_ID" \
+  --region "$AWS_REGION" \
+  >/dev/null
+
+echo
+echo "Waiting for Amplify deployment..."
+
+while true
+do
+    STATUS=$(aws amplify get-job \
+      --app-id "$AMPLIFY_APP_ID" \
+      --branch-name "$AMPLIFY_BRANCH_NAME" \
+      --job-id "$JOB_ID" \
+      --region "$AWS_REGION" \
+      --query 'job.summary.status' \
+      --output text)
+
+    echo "Deployment status: $STATUS"
+
+    case "$STATUS" in
+        SUCCEED)
+            break
+            ;;
+        FAILED|CANCELLED)
+            echo "ERROR: Amplify deployment failed."
+            exit 1
+            ;;
+        *)
+            sleep 10
+            ;;
+    esac
+done
+
+echo
+echo "=================================================="
+echo "Infrastructure Assets UI deployed successfully."
+echo "=================================================="
+echo
+echo "OpsAI URL:"
+echo "$AMPLIFY_URL"
+echo
+echo "Open the URL and press Ctrl + F5."
+
+
+
 
 
 Steps18
