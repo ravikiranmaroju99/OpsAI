@@ -5247,3 +5247,367 @@ What happens when the approved Knowledge Base does not contain an answer?
 Then show:
 
 Who created OpsAI Assistant and whom should I contact?
+
+
+
+
+
++++++++++++++++++++++++++++++++++++++++++++
+
+
++++++
+
+Below details need to be asked for the team to work 
+
+You need permission to work with these AWS services:
+
+AWS CloudShell
+To run AWS CLI commands
+Recommended policy: AWSCloudShellFullAccess
+Amazon Bedrock
+View and test Nova Lite
+Use Titan Embeddings
+Create Knowledge Bases
+Create and prepare Bedrock Agents
+Create agent aliases
+Invoke the agent
+Recommended policy: AmazonBedrockFullAccess
+Amazon S3
+Create the knowledge bucket
+Upload and update runbooks
+Enable encryption, versioning and public-access blocking
+Recommended for the demo: AmazonS3FullAccess
+For production, limit access only to the OpsAI buckets.
+AWS Lambda
+Create and update the backend function
+Configure environment variables
+Invoke and test the function
+Add API Gateway invocation permission
+Recommended policy: AWSLambda_FullAccess
+Amazon API Gateway
+Create the HTTP API
+Create the Lambda integration
+Create the /chat route and deployment stage
+Configure CORS
+Recommended policy: AmazonAPIGatewayAdministrator
+AWS Amplify Hosting
+Create the Amplify application
+Create the main branch
+Upload and redeploy the web UI
+Ask for permissions to manage Amplify Hosting applications, branches, deployments and jobs. AWS provides Amplify managed policies, but some of them are very powerful, so a restricted custom policy is preferable.
+Amazon CloudWatch Logs
+View Lambda logs
+Create or update log groups
+Configure log-retention settings
+Recommended policy: CloudWatchLogsFullAccess
+IAM role management
+
+Create the Bedrock and Lambda service roles
+Attach managed policies
+Add inline policies
+Pass the roles to Bedrock and Lambda
+Required IAM permissions include:
+
+iam:CreateRole
+iam:GetRole
+iam:PassRole
+iam:AttachRolePolicy
+iam:PutRolePolicy
+iam:GetRolePolicy
+iam:ListAttachedRolePolicies
+iam:ListRolePolicies
+iam:PassRole is especially required when assigning an execution role to Lambda or Bedrock. It should be restricted only to the OpsAI roles, not every role in the AWS account.
+
+Basic account identity permission
+sts:GetCallerIdentity
+This is used to confirm the AWS account and identity currently being used.
+
+Simple permission request to send
+Subject: AWS permissions required for OpsAI Assistant MVP
+
+Hi Team,
+
+I need temporary AWS access to build and demonstrate the OpsAI Assistant MVP in the us-east-1 Region.
+
+Please provide an IAM user or IAM role with console and AWS CloudShell access. Root-account access is not required.
+
+The following AWS service permissions are required:
+
+AWS CloudShell
+Amazon Bedrock models, Knowledge Bases and Agents
+Amazon S3
+AWS Lambda
+Amazon API Gateway HTTP APIs
+AWS Amplify Hosting
+Amazon CloudWatch Logs
+AWS IAM role creation and iam:PassRole
+AWS STS GetCallerIdentity
+The access is required to:
+
+Create an S3 knowledge bucket
+Upload operational runbooks
+Create and sync a Bedrock Knowledge Base
+Create and deploy a Bedrock Agent
+Create a Lambda backend
+Create an API Gateway endpoint
+Deploy the chatbot UI using Amplify Hosting
+View application logs in CloudWatch
+Create and pass only the required OpsAI service roles
+Suggested AWS-managed policies for the MVP are:
+
+AWSCloudShellFullAccess
+AmazonBedrockFullAccess
+AmazonS3FullAccess
+AWSLambda_FullAccess
+AmazonAPIGatewayAdministrator
+CloudWatchLogsFullAccess
+Please also provide restricted Amplify Hosting permissions and IAM permissions to create and pass only these roles:
+
+OpsAILambdaExecutionRole
+AmazonBedrockExecutionRoleForKnowledgeBase_*
+AmazonBedrockExecutionRoleForAgents_*
+This access is required only for the hackathon MVP setup and testing. It can be reduced or removed after the activity is completed.
+
+Thanks,
+Ravi Kiran Maroju
+
+Easiest option for a short hackathon
+The easiest option is temporary AdministratorAccess on a separate IAM role or IAM user. However, it gives very broad access. It should be time-limited, monitored and removed immediately after the setup.
+
+The safer option is the service-specific permissions listed above, with IAM and S3 access restricted only to resources beginning with:
+
+opsai-
+OpsAI
+AmazonBedrockExecutionRoleFor*
+
+or Cleanup steps 
+
+
+
+Complete OpsAI AWS Cleanup
+
+Run this only after your demo is finished. The cleanup permanently deletes the chatbot URL, backend, Knowledge Base, runbooks, vector data, logs and IAM service roles.
+
+
+cleanup_opsai_aws.sh
+
+
+The deletion order matters:
+
+
+
+
+Bedrock Agent aliases should be removed before deleting the Agent.
+
+
+The Knowledge Base must no longer be associated with the Agent before deletion.
+
+
+An S3 vector index must be deleted before its vector bucket.
+
+
+Because your S3 knowledge bucket has versioning enabled, all object versions and delete markers must be removed before deleting the bucket. 
+
+
+Step 1 — Upload the Script to CloudShell
+
+
+
+Sign in as opsai-admin.
+
+
+Open AWS CloudShell in us-east-1.
+
+
+Click Actions.
+
+
+Select Upload file.
+
+
+Upload:
+
+
+cleanup_opsai_aws.sh
+
+Step 2 — Check the Script
+
+Run:
+
+
+chmod +x ~/cleanup_opsai_aws.sh
+
+bash -n ~/cleanup_opsai_aws.sh
+
+No output from bash -n means the syntax is correct.
+
+
+Step 3 — Run the Complete Cleanup
+
+bash ~/cleanup_opsai_aws.sh
+
+The script displays the AWS account ID and asks for confirmation similar to:
+
+
+Type DELETE-OPSAI-845482522818 to continue:
+
+Enter the exact confirmation shown on your screen.
+
+
+Resources Deleted by the Script
+
+The script dynamically finds and deletes:
+
+
+Amplify app:
+opsai-assistant-ui
+
+API Gateway:
+opsai-assistant-http-api
+
+Lambda function:
+opsai-assistant-api
+
+CloudWatch log group:
+/aws/lambda/opsai-assistant-api
+
+Bedrock Agent:
+opsai-assistant-agent
+
+Agent alias:
+opsai-mvp
+
+Bedrock Knowledge Base:
+opsai-assistant-kb
+
+Knowledge Base data source:
+opsai-runbooks-s3
+
+S3 Vector index
+S3 Vector bucket
+
+S3 knowledge bucket:
+opsai-assistant-kb-<account-id>-us-east-1
+
+Lambda execution role:
+OpsAILambdaExecutionRole
+
+Bedrock Agent service role
+Bedrock Knowledge Base service role
+
+Deleting an Amplify app removes the Amplify application, deleting an API Gateway API removes the API resource, and deleting a Lambda function without specifying a version removes the function and its versions and aliases. 
+
+
+Step 4 — Review the Result
+
+At the end, you should see results similar to:
+
+
+Amplify app count: 0
+API Gateway API count: 0
+Lambda function: Deleted
+Bedrock agent count: 0
+Knowledge Base count: 0
+S3 knowledge bucket: Deleted
+
+The script also creates a cleanup log:
+
+
+~/opsai-cleanup-YYYYMMDD-HHMMSS.log
+
+Review any lines containing:
+
+
+WARNING
+ERROR
+STILL EXISTS
+
+Step 5 — Remove CloudShell Project Files
+
+The script intentionally keeps your local files so you can save your code and documentation first.
+
+
+After taking a backup, remove them with:
+
+
+rm -rf ~/opsai-assistant-aws
+
+Confirm:
+
+
+ls -ld ~/opsai-assistant-aws
+
+Expected result:
+
+
+No such file or directory
+
+Step 6 — Optional: Delete the opsai-admin IAM User
+
+The script does not delete opsai-admin, because deleting the IAM user currently being used could lock you out.
+
+
+Delete it only when:
+
+
+
+
+It was created only for this hackathon.
+
+
+No other project uses it.
+
+
+All AWS cleanup verification has passed.
+
+
+You can sign in through root or another administrator.
+
+
+Sign in through root or another administrator and open:
+
+
+IAM
+→ Users
+→ opsai-admin
+→ Delete
+
+Enter the username when AWS asks for confirmation.
+
+
+Do not delete opsai-admin while you are still signed in only through that account.
+
+
+Final Manual Verification
+
+Run these commands from another administrator session:
+
+
+export AWS_REGION=us-east-1
+
+aws amplify list-apps \
+  --region "$AWS_REGION" \
+  --query "apps[?name=='opsai-assistant-ui']"
+
+aws apigatewayv2 get-apis \
+  --region "$AWS_REGION" \
+  --query "Items[?Name=='opsai-assistant-http-api']"
+
+aws lambda get-function \
+  --function-name opsai-assistant-api \
+  --region "$AWS_REGION"
+
+aws bedrock-agent list-agents \
+  --region "$AWS_REGION" \
+  --query "agentSummaries[?agentName=='opsai-assistant-agent']"
+
+aws bedrock-agent list-knowledge-bases \
+  --region "$AWS_REGION" \
+  --query "knowledgeBaseSummaries[?name=='opsai-assistant-kb']"
+
+The Lambda command should return ResourceNotFoundException. The other commands should return empty results. Deleting the CloudWatch log group separately ensures the Lambda logs are also removed. 
+
+
+Run the cleanup only after saving your screenshots, source package and Steps 1–20 document
+
+
