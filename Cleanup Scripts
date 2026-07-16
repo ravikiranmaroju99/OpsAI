@@ -1,1 +1,976 @@
+bash ~/opsai_aws_complete_cleanup_all_in_one_final.sh delete
 
+cd ~
+
+chmod 700 ~/delete_opsai_admin_user_optional.sh
+
+bash ~/opsai_aws_complete_cleanup_all_in_one_final.sh delete
+
+
+add below content in bash ~/opsai_aws_complete_cleanup_all_in_one_final.sh delete file 
+
+bash ~/opsai_aws_complete_cleanup_all_in_one_final.sh verify
+
+
+
+++++++++++++++++++
+
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export AWS_PAGER=""
+export AWS_CLI_AUTO_PROMPT=off
+
+PROJECT_DIR="${HOME}/opsai-assistant-aws"
+ENV_FILE="${PROJECT_DIR}/.env"
+DEFAULT_EXPECTED_ACCOUNT_ID="845482522818"
+MODE="${1:-preview}"
+STATE_FILE_INPUT="${2:-}"
+
+AWS_REGION="${AWS_REGION:-us-east-1}"
+AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-$AWS_REGION}"
+export AWS_REGION AWS_DEFAULT_REGION
+
+AGENT_NAME="opsai-assistant-agent"
+ALIAS_NAME="opsai-mvp"
+KB_NAME="opsai-assistant-kb"
+DATA_SOURCE_NAME="opsai-runbooks-s3"
+LAMBDA_FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-opsai-assistant-api}"
+LAMBDA_ROLE_NAME="OpsAILambdaExecutionRole"
+API_NAME="opsai-assistant-http-api"
+AMPLIFY_APP_NAME="opsai-assistant-ui"
+LOG_GROUP="/aws/lambda/${LAMBDA_FUNCTION_NAME}"
+
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+PREVIEW_REPORT="${HOME}/opsai-cleanup-preview-${TIMESTAMP}.txt"
+LOG_FILE="${HOME}/opsai-cleanup-${TIMESTAMP}.log"
+STATE_FILE="${HOME}/opsai-cleanup-state-${TIMESTAMP}.tsv"
+TEMP_DIR=""
+FAILURES=0
+WARNINGS=0
+
+usage() {
+  cat <<'USAGE'
+OpsAI Assistant complete AWS cleanup
+
+Usage:
+  bash opsai_aws_complete_cleanup_all_in_one_final.sh preview
+  bash opsai_aws_complete_cleanup_all_in_one_final.sh delete
+  bash opsai_aws_complete_cleanup_all_in_one_final.sh verify [state-file]
+
+Modes:
+  preview  Read-only inventory. This is the default and deletes nothing.
+  delete   Permanently deletes the named OpsAI AWS resources after confirmation.
+  verify   Confirms that the project resources no longer exist.
+
+Safety:
+  The script is locked to AWS account 845482522818 by default.
+  To use an intentional different account, set:
+    OPSAI_EXPECTED_ACCOUNT_ID=<account-id>
+USAGE
+}
+
+cleanup_temp() {
+  if [[ -n "${TEMP_DIR:-}" && -d "$TEMP_DIR" ]]; then
+    rm -rf "$TEMP_DIR"
+  fi
+}
+trap cleanup_temp EXIT
+
+on_error() {
+  local line_number="$1"
+  local exit_code="$2"
+  echo
+  echo "ERROR: Script stopped at line ${line_number} with exit code ${exit_code}." >&2
+  echo "Review the most recent output and rerun preview or verify." >&2
+}
+trap 'on_error "$LINENO" "$?"' ERR
+
+valid_value() {
+  [[ -n "${1:-}" && "$1" != "None" && "$1" != "null" && "$1" != "NOT_FOUND" ]]
+}
+
+warn() {
+  WARNINGS=$((WARNINGS + 1))
+  echo "WARNING: $*" >&2
+}
+
+failure() {
+  FAILURES=$((FAILURES + 1))
+  echo "ERROR: $*" >&2
+}
+
+require_command() {
+  local name="$1"
+  if ! command -v "$name" >/dev/null 2>&1; then
+    echo "ERROR: Required command is not installed: $name" >&2
+    exit 1
+  fi
+}
+
+aws_text_list() {
+  # Convert AWS CLI text output (tabs/newlines) into one non-empty item per line.
+  tr '\t' '\n' | sed '/^[[:space:]]*$/d; /^None$/d; /^null$/d'
+}
+
+append_state() {
+  local type="$1"
+  local value="${2:-}"
+  if valid_value "$value"; then
+    printf '%s\t%s\n' "$type" "$value" >> "$STATE_FILE"
+  fi
+}
+
+account_guard() {
+  local expected_account_id="${OPSAI_EXPECTED_ACCOUNT_ID:-$DEFAULT_EXPECTED_ACCOUNT_ID}"
+
+  ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+  CURRENT_ARN="$(aws sts get-caller-identity --query Arn --output text)"
+
+  if [[ "$ACCOUNT_ID" != "$expected_account_id" ]]; then
+    cat >&2 <<EOF_ACCOUNT
+ERROR: AWS account safety check failed.
+Expected account: $expected_account_id
+Current account : $ACCOUNT_ID
+Current identity: $CURRENT_ARN
+
+No resources were changed.
+Only when this is intentionally the correct account, rerun with:
+  OPSAI_EXPECTED_ACCOUNT_ID=$ACCOUNT_ID bash $0 $MODE
+EOF_ACCOUNT
+    exit 1
+  fi
+}
+
+load_environment() {
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
+
+  AWS_REGION="${AWS_REGION:-us-east-1}"
+  AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-$AWS_REGION}"
+  export AWS_REGION AWS_DEFAULT_REGION
+
+  KNOWLEDGE_BUCKET="${OPSAI_BUCKET:-opsai-assistant-kb-${ACCOUNT_ID}-${AWS_REGION}}"
+}
+
+collect_inventory() {
+  mapfile -t AMPLIFY_APP_IDS < <(
+    aws amplify list-apps \
+      --region "$AWS_REGION" \
+      --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId" \
+      --output text 2>/dev/null | aws_text_list || true
+  )
+
+  mapfile -t API_IDS < <(
+    aws apigatewayv2 get-apis \
+      --region "$AWS_REGION" \
+      --query "Items[?Name=='${API_NAME}'].ApiId" \
+      --output text 2>/dev/null | aws_text_list || true
+  )
+
+  mapfile -t AGENT_IDS < <(
+    aws bedrock-agent list-agents \
+      --region "$AWS_REGION" \
+      --query "agentSummaries[?agentName=='${AGENT_NAME}'].agentId" \
+      --output text 2>/dev/null | aws_text_list || true
+  )
+
+  mapfile -t KB_IDS < <(
+    aws bedrock-agent list-knowledge-bases \
+      --region "$AWS_REGION" \
+      --query "knowledgeBaseSummaries[?name=='${KB_NAME}'].knowledgeBaseId" \
+      --output text 2>/dev/null | aws_text_list || true
+  )
+
+  LAMBDA_EXISTS="false"
+  if aws lambda get-function \
+    --function-name "$LAMBDA_FUNCTION_NAME" \
+    --region "$AWS_REGION" >/dev/null 2>&1; then
+    LAMBDA_EXISTS="true"
+  fi
+
+  LOG_GROUP_EXISTS="false"
+  if [[ "$(aws logs describe-log-groups \
+      --log-group-name-prefix "$LOG_GROUP" \
+      --region "$AWS_REGION" \
+      --query "length(logGroups[?logGroupName=='${LOG_GROUP}'])" \
+      --output text 2>/dev/null || echo 0)" != "0" ]]; then
+    LOG_GROUP_EXISTS="true"
+  fi
+
+  BUCKET_EXISTS="false"
+  if aws s3api head-bucket --bucket "$KNOWLEDGE_BUCKET" >/dev/null 2>&1; then
+    BUCKET_EXISTS="true"
+  fi
+
+  LAMBDA_ROLE_EXISTS="false"
+  if aws iam get-role --role-name "$LAMBDA_ROLE_NAME" >/dev/null 2>&1; then
+    LAMBDA_ROLE_EXISTS="true"
+  fi
+
+  declare -gA ROLE_NAMES=()
+  declare -gA VECTOR_INDEX_ARNS=()
+  declare -gA VECTOR_BUCKET_ARNS=()
+
+  ROLE_NAMES["$LAMBDA_ROLE_NAME"]=1
+
+  if valid_value "${LAMBDA_ROLE_ARN:-}"; then
+    ROLE_NAMES["${LAMBDA_ROLE_ARN##*/}"]=1
+  fi
+  if valid_value "${AGENT_ROLE_ARN:-}"; then
+    ROLE_NAMES["${AGENT_ROLE_ARN##*/}"]=1
+  fi
+  if valid_value "${KB_ROLE_ARN:-}"; then
+    ROLE_NAMES["${KB_ROLE_ARN##*/}"]=1
+  fi
+
+  for agent_id in "${AGENT_IDS[@]:-}"; do
+    [[ -z "$agent_id" ]] && continue
+
+    local agent_role_arn
+    agent_role_arn="$(aws bedrock-agent get-agent \
+      --agent-id "$agent_id" \
+      --region "$AWS_REGION" \
+      --query 'agent.agentResourceRoleArn' \
+      --output text 2>/dev/null || true)"
+
+    if valid_value "$agent_role_arn"; then
+      ROLE_NAMES["${agent_role_arn##*/}"]=1
+    fi
+  done
+
+  for kb_id in "${KB_IDS[@]:-}"; do
+    [[ -z "$kb_id" ]] && continue
+
+    local kb_json kb_role_arn vector_index_arn vector_bucket_arn
+    kb_json="$(aws bedrock-agent get-knowledge-base \
+      --knowledge-base-id "$kb_id" \
+      --region "$AWS_REGION" \
+      --output json 2>/dev/null || true)"
+
+    [[ -z "$kb_json" ]] && continue
+
+    kb_role_arn="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("knowledgeBase",{}).get("roleArn", ""))' <<<"$kb_json" 2>/dev/null || true)"
+    vector_index_arn="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("knowledgeBase",{}).get("storageConfiguration",{}).get("s3VectorsConfiguration",{}).get("indexArn", ""))' <<<"$kb_json" 2>/dev/null || true)"
+    vector_bucket_arn="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("knowledgeBase",{}).get("storageConfiguration",{}).get("s3VectorsConfiguration",{}).get("vectorBucketArn", ""))' <<<"$kb_json" 2>/dev/null || true)"
+
+    if valid_value "$kb_role_arn"; then
+      ROLE_NAMES["${kb_role_arn##*/}"]=1
+    fi
+    if valid_value "$vector_index_arn"; then
+      VECTOR_INDEX_ARNS["$vector_index_arn"]=1
+    fi
+    if valid_value "$vector_bucket_arn"; then
+      VECTOR_BUCKET_ARNS["$vector_bucket_arn"]=1
+    fi
+  done
+}
+
+write_state_file() {
+  : > "$STATE_FILE"
+  chmod 600 "$STATE_FILE"
+
+  append_state ACCOUNT_ID "$ACCOUNT_ID"
+  append_state REGION "$AWS_REGION"
+  append_state KNOWLEDGE_BUCKET "$KNOWLEDGE_BUCKET"
+  append_state LAMBDA_FUNCTION "$LAMBDA_FUNCTION_NAME"
+  append_state LOG_GROUP "$LOG_GROUP"
+  append_state AMPLIFY_APP_NAME "$AMPLIFY_APP_NAME"
+  append_state API_NAME "$API_NAME"
+  append_state AGENT_NAME "$AGENT_NAME"
+  append_state KB_NAME "$KB_NAME"
+
+  for id in "${AMPLIFY_APP_IDS[@]:-}"; do append_state AMPLIFY_APP_ID "$id"; done
+  for id in "${API_IDS[@]:-}"; do append_state API_ID "$id"; done
+  for id in "${AGENT_IDS[@]:-}"; do append_state AGENT_ID "$id"; done
+  for id in "${KB_IDS[@]:-}"; do append_state KB_ID "$id"; done
+  for arn in "${!VECTOR_INDEX_ARNS[@]}"; do append_state VECTOR_INDEX_ARN "$arn"; done
+  for arn in "${!VECTOR_BUCKET_ARNS[@]}"; do append_state VECTOR_BUCKET_ARN "$arn"; done
+  for role in "${!ROLE_NAMES[@]}"; do append_state ROLE_NAME "$role"; done
+}
+
+print_inventory() {
+  local bucket_versioning="Not found"
+  local bucket_objects="0"
+
+  if [[ "$BUCKET_EXISTS" == "true" ]]; then
+    bucket_versioning="$(aws s3api get-bucket-versioning \
+      --bucket "$KNOWLEDGE_BUCKET" \
+      --query 'Status' --output text 2>/dev/null || echo Unknown)"
+    [[ "$bucket_versioning" == "None" ]] && bucket_versioning="Disabled"
+
+    bucket_objects="$(aws s3api list-objects-v2 \
+      --bucket "$KNOWLEDGE_BUCKET" \
+      --max-keys 1 \
+      --query 'KeyCount' --output text 2>/dev/null || echo Unknown)"
+  fi
+
+  local vector_index_display="${!VECTOR_INDEX_ARNS[*]}"
+  local vector_bucket_display="${!VECTOR_BUCKET_ARNS[*]}"
+  local role_display="${!ROLE_NAMES[*]}"
+  [[ -n "$vector_index_display" ]] || vector_index_display="Not found"
+  [[ -n "$vector_bucket_display" ]] || vector_bucket_display="Not found"
+  [[ -n "$role_display" ]] || role_display="Not found"
+
+  {
+    echo "============================================================"
+    echo " OpsAI Assistant - AWS CLEANUP PREVIEW"
+    echo "============================================================"
+    echo "Generated     : $(date)"
+    echo "AWS account   : $ACCOUNT_ID"
+    echo "AWS identity  : $CURRENT_ARN"
+    echo "AWS region    : $AWS_REGION"
+    echo
+    echo "This preview is read-only. Nothing was deleted."
+    echo
+    printf 'Amplify app IDs                 : %s\n' "${AMPLIFY_APP_IDS[*]:-Not found}"
+    printf 'API Gateway HTTP API IDs        : %s\n' "${API_IDS[*]:-Not found}"
+    printf 'Lambda function                 : %s\n' "$([[ "$LAMBDA_EXISTS" == true ]] && echo Found || echo Not found)"
+    printf 'CloudWatch log group            : %s\n' "$([[ "$LOG_GROUP_EXISTS" == true ]] && echo Found || echo Not found)"
+    printf 'Bedrock Agent IDs               : %s\n' "${AGENT_IDS[*]:-Not found}"
+    printf 'Bedrock Knowledge Base IDs      : %s\n' "${KB_IDS[*]:-Not found}"
+    printf 'S3 knowledge bucket             : %s\n' "$([[ "$BUCKET_EXISTS" == true ]] && echo "$KNOWLEDGE_BUCKET" || echo 'Not found')"
+    printf 'S3 bucket versioning            : %s\n' "$bucket_versioning"
+    printf 'S3 current-object sample count  : %s\n' "$bucket_objects"
+    printf 'S3 Vector index ARNs            : %s\n' "$vector_index_display"
+    printf 'S3 Vector bucket ARNs           : %s\n' "$vector_bucket_display"
+    printf 'IAM roles selected              : %s\n' "$role_display"
+    echo
+    echo "Resource names targeted by delete mode:"
+    echo "  Amplify : $AMPLIFY_APP_NAME"
+    echo "  API     : $API_NAME"
+    echo "  Lambda  : $LAMBDA_FUNCTION_NAME"
+    echo "  Agent   : $AGENT_NAME"
+    echo "  KB      : $KB_NAME"
+    echo "  Bucket  : $KNOWLEDGE_BUCKET"
+    echo
+    echo "Preview report: $PREVIEW_REPORT"
+    echo "State file    : $STATE_FILE"
+  } | tee "$PREVIEW_REPORT"
+}
+
+retry() {
+  local attempts="$1"
+  local sleep_seconds="$2"
+  shift 2
+
+  local attempt
+  for ((attempt=1; attempt<=attempts; attempt++)); do
+    if "$@"; then
+      return 0
+    fi
+    if (( attempt < attempts )); then
+      sleep "$sleep_seconds"
+    fi
+  done
+  return 1
+}
+
+wait_not_found() {
+  local description="$1"
+  local attempts="$2"
+  local sleep_seconds="$3"
+  shift 3
+
+  local attempt
+  for ((attempt=1; attempt<=attempts; attempt++)); do
+    if ! "$@" >/dev/null 2>&1; then
+      echo "Confirmed deleted: $description"
+      return 0
+    fi
+    sleep "$sleep_seconds"
+  done
+
+  warn "Timed out waiting for deletion: $description"
+  return 1
+}
+
+empty_and_delete_s3_bucket() {
+  local bucket="$1"
+
+  if ! aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+    echo "S3 knowledge bucket not found. Skipped: $bucket"
+    return 0
+  fi
+
+  echo "Removing current S3 objects from: $bucket"
+  if ! aws s3 rm "s3://${bucket}" --recursive --only-show-errors; then
+    warn "Could not remove all current objects from $bucket. Version cleanup will still be attempted."
+  fi
+
+  TEMP_DIR="$(mktemp -d "${HOME}/.opsai-cleanup.XXXXXX")"
+  chmod 700 "$TEMP_DIR"
+
+  local pass=0
+  while true; do
+    pass=$((pass + 1))
+    local listing_file="$TEMP_DIR/object-versions.json"
+    local delete_file="$TEMP_DIR/delete-batch.json"
+
+    if ! aws s3api list-object-versions \
+      --bucket "$bucket" \
+      --max-keys 1000 \
+      --output json > "$listing_file"; then
+      failure "Unable to list object versions in bucket $bucket."
+      return 1
+    fi
+
+    local count
+    count="$(python3 - "$listing_file" "$delete_file" <<'PY'
+import json
+import sys
+
+source, destination = sys.argv[1], sys.argv[2]
+with open(source, "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+objects = []
+for collection in ("Versions", "DeleteMarkers"):
+    for item in data.get(collection, []) or []:
+        key = item.get("Key")
+        version_id = item.get("VersionId")
+        if key is not None and version_id is not None:
+            objects.append({"Key": key, "VersionId": version_id})
+
+with open(destination, "w", encoding="utf-8") as handle:
+    json.dump({"Objects": objects, "Quiet": True}, handle)
+
+print(len(objects))
+PY
+)"
+
+    if [[ "$count" == "0" ]]; then
+      break
+    fi
+
+    echo "Deleting S3 object-version batch ${pass}: ${count} entries"
+    if ! aws s3api delete-objects \
+      --bucket "$bucket" \
+      --delete "file://${delete_file}" \
+      --output json >/dev/null; then
+      failure "Unable to delete an object-version batch from $bucket."
+      return 1
+    fi
+  done
+
+  if aws s3api delete-bucket --bucket "$bucket" --region "$AWS_REGION"; then
+    echo "Deleted S3 knowledge bucket: $bucket"
+  else
+    failure "S3 bucket was not deleted: $bucket"
+    return 1
+  fi
+}
+
+delete_iam_role() {
+  local role_name="$1"
+
+  if ! aws iam get-role --role-name "$role_name" >/dev/null 2>&1; then
+    echo "IAM role not found. Skipped: $role_name"
+    return 0
+  fi
+
+  echo "Cleaning IAM role: $role_name"
+
+  mapfile -t instance_profiles < <(
+    aws iam list-instance-profiles-for-role \
+      --role-name "$role_name" \
+      --query 'InstanceProfiles[].InstanceProfileName' \
+      --output text 2>/dev/null | aws_text_list || true
+  )
+
+  for profile_name in "${instance_profiles[@]:-}"; do
+    [[ -z "$profile_name" ]] && continue
+    if aws iam remove-role-from-instance-profile \
+      --instance-profile-name "$profile_name" \
+      --role-name "$role_name"; then
+      local roles_remaining
+      roles_remaining="$(aws iam get-instance-profile \
+        --instance-profile-name "$profile_name" \
+        --query 'length(InstanceProfile.Roles)' \
+        --output text 2>/dev/null || echo 1)"
+      if [[ "$roles_remaining" == "0" ]]; then
+        aws iam delete-instance-profile \
+          --instance-profile-name "$profile_name" || warn "Could not delete empty instance profile $profile_name."
+      fi
+    else
+      warn "Could not remove role $role_name from instance profile $profile_name."
+    fi
+  done
+
+  mapfile -t attached_policies < <(
+    aws iam list-attached-role-policies \
+      --role-name "$role_name" \
+      --query 'AttachedPolicies[].PolicyArn' \
+      --output text 2>/dev/null | aws_text_list || true
+  )
+
+  for policy_arn in "${attached_policies[@]:-}"; do
+    [[ -z "$policy_arn" ]] && continue
+    aws iam detach-role-policy \
+      --role-name "$role_name" \
+      --policy-arn "$policy_arn" || warn "Could not detach $policy_arn from $role_name."
+  done
+
+  mapfile -t inline_policies < <(
+    aws iam list-role-policies \
+      --role-name "$role_name" \
+      --query 'PolicyNames[]' \
+      --output text 2>/dev/null | aws_text_list || true
+  )
+
+  for policy_name in "${inline_policies[@]:-}"; do
+    [[ -z "$policy_name" ]] && continue
+    aws iam delete-role-policy \
+      --role-name "$role_name" \
+      --policy-name "$policy_name" || warn "Could not delete inline policy $policy_name from $role_name."
+  done
+
+  aws iam delete-role-permissions-boundary \
+    --role-name "$role_name" >/dev/null 2>&1 || true
+
+  if retry 10 3 aws iam delete-role --role-name "$role_name"; then
+    echo "Deleted IAM role: $role_name"
+  else
+    failure "IAM role was not deleted: $role_name"
+    return 1
+  fi
+}
+
+perform_delete() {
+  echo "============================================================"
+  echo " OpsAI Assistant - COMPLETE AWS CLEANUP"
+  echo "============================================================"
+  echo "AWS account : $ACCOUNT_ID"
+  echo "AWS identity: $CURRENT_ARN"
+  echo "AWS region  : $AWS_REGION"
+  echo
+  echo "This permanently deletes only the named OpsAI project resources:"
+  echo "  - Amplify application and hosted URL"
+  echo "  - API Gateway HTTP API"
+  echo "  - Lambda function and CloudWatch log group"
+  echo "  - Bedrock Agent aliases and Agent"
+  echo "  - Bedrock data sources and Knowledge Base"
+  echo "  - S3 Vector index and vector bucket discovered from the KB"
+  echo "  - Versioned S3 knowledge bucket and all object versions"
+  echo "  - Exact IAM roles discovered from these resources"
+  echo
+  echo "This action cannot be undone."
+  echo
+
+  local expected_confirmation="DELETE-OPSAI-${ACCOUNT_ID}"
+  read -r -p "Type ${expected_confirmation} to continue: " confirmation
+  if [[ "$confirmation" != "$expected_confirmation" ]]; then
+    echo "Confirmation did not match. No resources were deleted."
+    exit 1
+  fi
+
+  exec > >(tee -a "$LOG_FILE") 2>&1
+
+  echo
+  echo "Cleanup started: $(date)"
+  echo "Log file       : $LOG_FILE"
+  echo "State file     : $STATE_FILE"
+
+  echo
+  echo "[1/8] Deleting Amplify application(s)..."
+  for app_id in "${AMPLIFY_APP_IDS[@]:-}"; do
+    [[ -z "$app_id" ]] && continue
+    if aws amplify delete-app --app-id "$app_id" --region "$AWS_REGION" >/dev/null; then
+      echo "Deleted Amplify app: $app_id"
+    else
+      failure "Amplify app was not deleted: $app_id"
+    fi
+  done
+  [[ ${#AMPLIFY_APP_IDS[@]} -eq 0 ]] && echo "Amplify app not found. Skipped."
+
+  echo
+  echo "[2/8] Deleting API Gateway HTTP API(s)..."
+  for api_id in "${API_IDS[@]:-}"; do
+    [[ -z "$api_id" ]] && continue
+    if aws apigatewayv2 delete-api --api-id "$api_id" --region "$AWS_REGION"; then
+      echo "Deleted API Gateway API: $api_id"
+    else
+      failure "API Gateway API was not deleted: $api_id"
+    fi
+  done
+  [[ ${#API_IDS[@]} -eq 0 ]] && echo "API Gateway API not found. Skipped."
+
+  echo
+  echo "[3/8] Deleting Lambda and CloudWatch logs..."
+  if [[ "$LAMBDA_EXISTS" == "true" ]]; then
+    if aws lambda delete-function \
+      --function-name "$LAMBDA_FUNCTION_NAME" \
+      --region "$AWS_REGION"; then
+      echo "Deleted Lambda function: $LAMBDA_FUNCTION_NAME"
+    else
+      failure "Lambda function was not deleted: $LAMBDA_FUNCTION_NAME"
+    fi
+  else
+    echo "Lambda function not found. Skipped."
+  fi
+
+  if [[ "$LOG_GROUP_EXISTS" == "true" ]]; then
+    if aws logs delete-log-group \
+      --log-group-name "$LOG_GROUP" \
+      --region "$AWS_REGION"; then
+      echo "Deleted CloudWatch log group: $LOG_GROUP"
+    else
+      failure "CloudWatch log group was not deleted: $LOG_GROUP"
+    fi
+  else
+    echo "CloudWatch log group not found. Skipped."
+  fi
+
+  echo
+  echo "[4/8] Deleting Bedrock Agent aliases and Agent(s)..."
+  for agent_id in "${AGENT_IDS[@]:-}"; do
+    [[ -z "$agent_id" ]] && continue
+
+    mapfile -t alias_ids < <(
+      aws bedrock-agent list-agent-aliases \
+        --agent-id "$agent_id" \
+        --region "$AWS_REGION" \
+        --query "agentAliasSummaries[?agentAliasId!='TSTALIASID'].agentAliasId" \
+        --output text 2>/dev/null | aws_text_list || true
+    )
+
+    for alias_id in "${alias_ids[@]:-}"; do
+      [[ -z "$alias_id" ]] && continue
+      if retry 12 5 aws bedrock-agent delete-agent-alias \
+        --agent-id "$agent_id" \
+        --agent-alias-id "$alias_id" \
+        --region "$AWS_REGION" >/dev/null; then
+        echo "Requested deletion of Agent alias: $alias_id"
+      else
+        warn "Could not delete Agent alias $alias_id. Agent deletion will still be attempted."
+      fi
+    done
+
+    for kb_id in "${KB_IDS[@]:-}"; do
+      [[ -z "$kb_id" ]] && continue
+      aws bedrock-agent disassociate-agent-knowledge-base \
+        --agent-id "$agent_id" \
+        --agent-version DRAFT \
+        --knowledge-base-id "$kb_id" \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
+    done
+
+    if retry 12 5 aws bedrock-agent delete-agent \
+      --agent-id "$agent_id" \
+      --skip-resource-in-use-check \
+      --region "$AWS_REGION" >/dev/null; then
+      wait_not_found "Bedrock Agent $agent_id" 40 5 \
+        aws bedrock-agent get-agent --agent-id "$agent_id" --region "$AWS_REGION" || true
+    else
+      failure "Bedrock Agent was not deleted: $agent_id"
+    fi
+  done
+  [[ ${#AGENT_IDS[@]} -eq 0 ]] && echo "Bedrock Agent not found. Skipped."
+
+  echo
+  echo "[5/8] Deleting Bedrock data source(s) and Knowledge Base(s)..."
+  for kb_id in "${KB_IDS[@]:-}"; do
+    [[ -z "$kb_id" ]] && continue
+
+    mapfile -t data_source_ids < <(
+      aws bedrock-agent list-data-sources \
+        --knowledge-base-id "$kb_id" \
+        --region "$AWS_REGION" \
+        --query 'dataSourceSummaries[].dataSourceId' \
+        --output text 2>/dev/null | aws_text_list || true
+    )
+
+    for data_source_id in "${data_source_ids[@]:-}"; do
+      [[ -z "$data_source_id" ]] && continue
+      if retry 12 5 aws bedrock-agent delete-data-source \
+        --knowledge-base-id "$kb_id" \
+        --data-source-id "$data_source_id" \
+        --region "$AWS_REGION" >/dev/null; then
+        echo "Requested deletion of data source: $data_source_id"
+      else
+        failure "Data source was not deleted: $data_source_id"
+      fi
+    done
+
+    for _ in {1..40}; do
+      local remaining_ds
+      remaining_ds="$(aws bedrock-agent list-data-sources \
+        --knowledge-base-id "$kb_id" \
+        --region "$AWS_REGION" \
+        --query 'length(dataSourceSummaries)' \
+        --output text 2>/dev/null || echo 0)"
+      [[ "$remaining_ds" == "0" ]] && break
+      sleep 5
+    done
+
+    if retry 12 5 aws bedrock-agent delete-knowledge-base \
+      --knowledge-base-id "$kb_id" \
+      --region "$AWS_REGION" >/dev/null; then
+      wait_not_found "Bedrock Knowledge Base $kb_id" 50 5 \
+        aws bedrock-agent get-knowledge-base --knowledge-base-id "$kb_id" --region "$AWS_REGION" || true
+    else
+      failure "Bedrock Knowledge Base was not deleted: $kb_id"
+    fi
+  done
+  [[ ${#KB_IDS[@]} -eq 0 ]] && echo "Bedrock Knowledge Base not found. Skipped."
+
+  echo
+  echo "[6/8] Deleting S3 Vector index(es) and vector bucket(s)..."
+  if ! aws s3vectors help >/dev/null 2>&1; then
+    if (( ${#VECTOR_INDEX_ARNS[@]} > 0 || ${#VECTOR_BUCKET_ARNS[@]} > 0 )); then
+      failure "This AWS CLI does not include s3vectors commands. Update AWS CLI v2 and rerun delete mode."
+    else
+      echo "No S3 Vector resources were discovered."
+    fi
+  else
+    for index_arn in "${!VECTOR_INDEX_ARNS[@]}"; do
+      if retry 12 5 aws s3vectors delete-index \
+        --index-arn "$index_arn" \
+        --region "$AWS_REGION" >/dev/null; then
+        wait_not_found "S3 Vector index $index_arn" 40 5 \
+          aws s3vectors get-index --index-arn "$index_arn" --region "$AWS_REGION" || true
+      else
+        failure "S3 Vector index was not deleted: $index_arn"
+      fi
+    done
+
+    for bucket_arn in "${!VECTOR_BUCKET_ARNS[@]}"; do
+      aws s3vectors delete-vector-bucket-policy \
+        --vector-bucket-arn "$bucket_arn" \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
+
+      if retry 20 5 aws s3vectors delete-vector-bucket \
+        --vector-bucket-arn "$bucket_arn" \
+        --region "$AWS_REGION" >/dev/null; then
+        wait_not_found "S3 Vector bucket $bucket_arn" 40 5 \
+          aws s3vectors get-vector-bucket --vector-bucket-arn "$bucket_arn" --region "$AWS_REGION" || true
+      else
+        failure "S3 Vector bucket was not deleted: $bucket_arn"
+      fi
+    done
+
+    if (( ${#VECTOR_INDEX_ARNS[@]} == 0 && ${#VECTOR_BUCKET_ARNS[@]} == 0 )); then
+      echo "No S3 Vector resources were discovered."
+    fi
+  fi
+
+  echo
+  echo "[7/8] Emptying and deleting the versioned S3 knowledge bucket..."
+  empty_and_delete_s3_bucket "$KNOWLEDGE_BUCKET" || true
+
+  echo
+  echo "[8/8] Deleting exact IAM roles used by OpsAI..."
+  for role_name in "${!ROLE_NAMES[@]}"; do
+    delete_iam_role "$role_name" || true
+  done
+
+  echo
+  echo "Cleanup deletion phase completed: $(date)"
+  echo "Warnings: $WARNINGS"
+  echo "Errors  : $FAILURES"
+  echo "Log file: $LOG_FILE"
+  echo
+
+  if (( FAILURES > 0 )); then
+    echo "Some resources could not be deleted. Run verify, review the log, then rerun delete mode."
+    return 2
+  fi
+
+  return 0
+}
+
+latest_state_file() {
+  ls -1t "${HOME}"/opsai-cleanup-state-*.tsv 2>/dev/null | head -1 || true
+}
+
+state_values() {
+  local file="$1"
+  local type="$2"
+  awk -F '\t' -v target="$type" '$1 == target {print $2}' "$file" 2>/dev/null || true
+}
+
+perform_verify() {
+  local verify_state="${1:-$STATE_FILE_INPUT}"
+  if [[ -z "$verify_state" ]]; then
+    verify_state="$(latest_state_file)"
+  fi
+
+  local verify_failures=0
+
+  echo "============================================================"
+  echo " OpsAI Assistant - AWS CLEANUP VERIFICATION"
+  echo "============================================================"
+  echo "AWS account : $ACCOUNT_ID"
+  echo "AWS identity: $CURRENT_ARN"
+  echo "AWS region  : $AWS_REGION"
+  echo "State file  : ${verify_state:-Not available}"
+  echo
+
+  local count
+
+  count="$(aws amplify list-apps \
+    --region "$AWS_REGION" \
+    --query "length(apps[?name=='${AMPLIFY_APP_NAME}'])" \
+    --output text 2>/dev/null || echo CHECK_FAILED)"
+  printf 'Amplify app count                 : %s\n' "$count"
+  [[ "$count" == "0" ]] || verify_failures=$((verify_failures + 1))
+
+  count="$(aws apigatewayv2 get-apis \
+    --region "$AWS_REGION" \
+    --query "length(Items[?Name=='${API_NAME}'])" \
+    --output text 2>/dev/null || echo CHECK_FAILED)"
+  printf 'API Gateway API count             : %s\n' "$count"
+  [[ "$count" == "0" ]] || verify_failures=$((verify_failures + 1))
+
+  if aws lambda get-function \
+    --function-name "$LAMBDA_FUNCTION_NAME" \
+    --region "$AWS_REGION" >/dev/null 2>&1; then
+    echo "Lambda function                   : STILL EXISTS"
+    verify_failures=$((verify_failures + 1))
+  else
+    echo "Lambda function                   : Deleted"
+  fi
+
+  count="$(aws logs describe-log-groups \
+    --log-group-name-prefix "$LOG_GROUP" \
+    --region "$AWS_REGION" \
+    --query "length(logGroups[?logGroupName=='${LOG_GROUP}'])" \
+    --output text 2>/dev/null || echo CHECK_FAILED)"
+  printf 'CloudWatch log group count         : %s\n' "$count"
+  [[ "$count" == "0" ]] || verify_failures=$((verify_failures + 1))
+
+  count="$(aws bedrock-agent list-agents \
+    --region "$AWS_REGION" \
+    --query "length(agentSummaries[?agentName=='${AGENT_NAME}'])" \
+    --output text 2>/dev/null || echo CHECK_FAILED)"
+  printf 'Bedrock Agent count                : %s\n' "$count"
+  [[ "$count" == "0" ]] || verify_failures=$((verify_failures + 1))
+
+  count="$(aws bedrock-agent list-knowledge-bases \
+    --region "$AWS_REGION" \
+    --query "length(knowledgeBaseSummaries[?name=='${KB_NAME}'])" \
+    --output text 2>/dev/null || echo CHECK_FAILED)"
+  printf 'Bedrock Knowledge Base count       : %s\n' "$count"
+  [[ "$count" == "0" ]] || verify_failures=$((verify_failures + 1))
+
+  if aws s3api head-bucket --bucket "$KNOWLEDGE_BUCKET" >/dev/null 2>&1; then
+    echo "S3 knowledge bucket               : STILL EXISTS"
+    verify_failures=$((verify_failures + 1))
+  else
+    echo "S3 knowledge bucket               : Deleted"
+  fi
+
+  if [[ -n "$verify_state" && -f "$verify_state" ]]; then
+    while IFS= read -r role_name; do
+      [[ -z "$role_name" ]] && continue
+      if aws iam get-role --role-name "$role_name" >/dev/null 2>&1; then
+        echo "IAM role $role_name: STILL EXISTS"
+        verify_failures=$((verify_failures + 1))
+      else
+        echo "IAM role $role_name: Deleted"
+      fi
+    done < <(state_values "$verify_state" ROLE_NAME)
+
+    if aws s3vectors help >/dev/null 2>&1; then
+      while IFS= read -r index_arn; do
+        [[ -z "$index_arn" ]] && continue
+        if aws s3vectors get-index --index-arn "$index_arn" --region "$AWS_REGION" >/dev/null 2>&1; then
+          echo "S3 Vector index: STILL EXISTS - $index_arn"
+          verify_failures=$((verify_failures + 1))
+        else
+          echo "S3 Vector index: Deleted - $index_arn"
+        fi
+      done < <(state_values "$verify_state" VECTOR_INDEX_ARN)
+
+      while IFS= read -r bucket_arn; do
+        [[ -z "$bucket_arn" ]] && continue
+        if aws s3vectors get-vector-bucket --vector-bucket-arn "$bucket_arn" --region "$AWS_REGION" >/dev/null 2>&1; then
+          echo "S3 Vector bucket: STILL EXISTS - $bucket_arn"
+          verify_failures=$((verify_failures + 1))
+        else
+          echo "S3 Vector bucket: Deleted - $bucket_arn"
+        fi
+      done < <(state_values "$verify_state" VECTOR_BUCKET_ARN)
+    fi
+  else
+    echo "Exact IAM-role and S3 Vector verification was skipped because no state file was found."
+  fi
+
+  echo
+  if (( verify_failures == 0 )); then
+    echo "RESULT: All discovered OpsAI AWS resources are deleted."
+    echo "You may now remove local CloudShell project files after saving a backup."
+    return 0
+  fi
+
+  echo "RESULT: ${verify_failures} cleanup check(s) still require attention."
+  echo "Rerun delete mode, then run verify again."
+  return 2
+}
+
+main() {
+  case "$MODE" in
+    preview|delete|verify|-h|--help|help)
+      ;;
+    *)
+      echo "ERROR: Unknown mode: $MODE" >&2
+      usage
+      exit 1
+      ;;
+  esac
+
+  if [[ "$MODE" == "-h" || "$MODE" == "--help" || "$MODE" == "help" ]]; then
+    usage
+    exit 0
+  fi
+
+  require_command aws
+  require_command python3
+  require_command sed
+  require_command awk
+  require_command tee
+
+  account_guard
+  load_environment
+
+  case "$MODE" in
+    preview)
+      collect_inventory
+      write_state_file
+      print_inventory
+      ;;
+    delete)
+      collect_inventory
+      write_state_file
+      local delete_rc=0
+      local verify_rc=0
+      perform_delete || delete_rc=$?
+      echo
+      perform_verify "$STATE_FILE" || verify_rc=$?
+      if (( delete_rc != 0 || verify_rc != 0 )); then
+        exit 2
+      fi
+      ;;
+    verify)
+      perform_verify
+      ;;
+  esac
+}
+
+main "$@"
+
+
+
++++++++++++++++++++++
+
+
+rm -rf ~/opsai-assistant-aws
+
+
+Optional 
+
+bash ~/delete_opsai_admin_user_optional.sh
